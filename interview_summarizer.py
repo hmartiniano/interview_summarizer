@@ -509,14 +509,23 @@ def build_analyzer_graph():
 def main():
     """Main function with argument parsing and workflow execution."""
     parser = argparse.ArgumentParser(description="Analyze a meeting transcript with LangGraph")
-    parser.add_argument("transcript_path", nargs='?', help="Path to transcript file (.txt)")
-    parser.add_argument("--config", help="Path to YAML configuration file")
-    parser.add_argument("--model", choices=["ollama", "openai", "google"], help="LLM provider")
-    parser.add_argument("--ollama-model", help="Ollama model name to use (e.g., llama3)")
-    parser.add_argument("--openai-model", help="OpenAI model name to use (e.g., gpt-4o)")
-    parser.add_argument("--google-model", help="Google model name to use (e.g., gemini-1.5-flash)")
-    parser.add_argument("--output", help="Output file path")
-    parser.add_argument("--format", choices=["console", "json", "markdown"], default="console")
+
+    # Input/Output Options
+    io_group = parser.add_argument_group("Input/Output Options")
+    io_group.add_argument("transcript_path", nargs='?', help="Path to transcript file (.txt)")
+    io_group.add_argument("--output", help="Output file path")
+    io_group.add_argument("--format", choices=["console", "json", "markdown"], default="console", help="Output format")
+
+    # Configuration Options
+    config_group = parser.add_argument_group("Configuration Options")
+    config_group.add_argument("--config", help="Path to YAML configuration file")
+
+    # LLM Model Options
+    llm_group = parser.add_argument_group("LLM Model Options")
+    llm_group.add_argument("--model", choices=["ollama", "openai", "google"], help="LLM provider")
+    llm_group.add_argument("--ollama-model", help="Ollama model name to use (e.g., llama3)")
+    llm_group.add_argument("--openai-model", help="OpenAI model name to use (e.g., gpt-4o)")
+    llm_group.add_argument("--google-model", help="Google model name to use (e.g., gemini-1.5-flash)")
     
     args = parser.parse_args()
     
