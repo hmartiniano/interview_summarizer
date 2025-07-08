@@ -77,6 +77,7 @@ class Config:
     retry_delay: float = 2.0
     enable_progress_bar: bool = True
     allowed_extensions: List[str] = field(default_factory=lambda: ['.txt'])
+    prompts_file: str = "prompts.yaml" # New: Path to prompts YAML
 
     @classmethod
     def from_yaml(cls, config_path: str) -> 'Config':
@@ -87,11 +88,32 @@ class Config:
             logger.error(f"Failed to load config from {config_path}: {e}")
             return cls()
 
+class PromptManager:
+    """Manages loading and accessing prompt templates from a YAML file."""
+    def __init__(self, prompts_file: str):
+        self.prompts = self._load_prompts(prompts_file)
+
+    def _load_prompts(self, prompts_file: str) -> Dict[str, Any]:
+        try:
+            with open(prompts_file, 'r') as f:
+                return yaml.safe_load(f)
+        except Exception as e:
+            logger.error(f"Failed to load prompts from {prompts_file}: {e}")
+            return {}
+
+    def get_prompt(self, task: str, prompt_type: str) -> PromptTemplate:
+        try:
+            template = self.prompts[task][prompt_type]
+            return PromptTemplate.from_template(template)
+        except KeyError:
+            raise ValueError(f"Prompt for task '{task}' and type '{prompt_type}' not found.")
+
 
 class TranscriptState(TypedDict):
     """State representation for the transcript processing workflow."""
     transcript_path: str
     config: Config
+    prompts: Any # New: Store loaded prompts
     full_transcript: Optional[str]
     token_count: int
     docs: Optional[List[Document]]
@@ -262,34 +284,11 @@ def load_and_split_transcript(state: TranscriptState) -> TranscriptState:
 @measure_time
 @retry_on_failure()
 def identify_topics(state: TranscriptState) -> TranscriptState:
-    config, docs = state['config'], state['docs']
+    config, docs, prompts = state['config'], state['docs'], state['prompts']
     if not docs: return state
 
-    initial_prompt = PromptTemplate.from_template(
-        "You are an analyst. Read the text chunk and identify main topics. Return a JSON object with a 'topics' key containing a list of strings.\n\nTEXT CHUNK:\n---\n{text}\n---\n\nRespond with ONLY the JSON object."
-    )
-    refine_prompt = PromptTemplate.from_template(
-        """You are a topic consolidation agent. Refine an existing list of topics by analyzing a new text chunk and merging new information.
-
-**Instructions:**
-1.  **Analyze Existing Topics:** Review the `EXISTING TOPICS` provided.
-2.  **Identify New Topics:** Read the `NEW TEXT CHUNK` and identify new topics.
-3.  **Consolidate and Merge:** Compare each new topic to the existing list.
-    - If it is semantically identical or a slight variation of an existing topic, **do not add it**.
-    - If it is a sub-topic of an existing topic, **merge them** into a more comprehensive topic.
-    - If it is a completely new and distinct topic, **add it**.
-4.  **Final Output:** Return a single JSON object with one key, "topics", containing the final, consolidated list of strings.
-
-**EXISTING TOPICS (JSON string):**
-{existing_answer}
-
-**NEW TEXT CHUNK:**
----
-{text}
----
-
-Respond with ONLY the updated and consolidated JSON object."""
-    )
+    initial_prompt = prompts.get_prompt("identify_topics", "initial_prompt")
+    refine_prompt = prompts.get_prompt("identify_topics", "refine_prompt")
     
     update_progress(state, "Identifying topics", 0.05)
     refiner = IterativeRefiner(LLMProvider.create_llm(config, json_mode=True), initial_prompt, refine_prompt, JsonOutputParser())
@@ -303,24 +302,11 @@ Respond with ONLY the updated and consolidated JSON object."""
 def summarize_topics(state: TranscriptState) -> TranscriptState:
     config, docs = state['config'], state['docs']
     topics = state.get('analysis', {}).get('topics', [])
+    prompts = state['prompts']
     if not topics or not docs: return state
 
-    initial_prompt = PromptTemplate.from_template(
-        "You are an Expert Analyst. Your task is to provide a concise summary of expert opinions on **'{topic}'** based *only* on the text below.\n\nTEXT CHUNK:\n---\n{text}\n---\n\nSUMMARY FOR '{topic}':"
-    )
-    refine_prompt = PromptTemplate.from_template(
-        """You are an Expert Analyst. You have an existing summary for the topic **'{topic}'**. Refine this summary with the new context provided below. Focus ONLY on information relevant to '{topic}'.
-
-EXISTING SUMMARY FOR '{topic}':
-{existing_answer}
-
-NEW CONTEXT:
----
-{text}
----
-
-REFINED SUMMARY FOR '{topic}':"""
-    )
+    initial_prompt = prompts.get_prompt("summarize_topics", "initial_prompt")
+    refine_prompt = prompts.get_prompt("summarize_topics", "refine_prompt")
 
     summaries = {}
     total_topics = len(topics)
@@ -341,24 +327,11 @@ REFINED SUMMARY FOR '{topic}':"""
 @retry_on_failure()
 def extract_key_insights(state: TranscriptState) -> TranscriptState:
     config, docs = state['config'], state['docs']
+    prompts = state['prompts']
     if not docs: return state
 
-    initial_prompt = PromptTemplate.from_template(
-        "You are an analyst. Extract overarching key insights from the text below. Return a JSON object with an 'insights' key containing a list of strings (direct quotes attributed to the speaker).\n\nTEXT:\n---\n{text}\n---\n\nJSON:"
-    )
-    refine_prompt = PromptTemplate.from_template(
-        """You are an analyst. You have an existing list of key insights. Add new insights from the text below, avoiding duplicates.
-
-EXISTING INSIGHTS:
-{existing_answer}
-
-NEW TEXT:
----
-{text}
----
-
-CONSOLIDATED JSON:"""
-    )
+    initial_prompt = prompts.get_prompt("extract_key_insights", "initial_prompt")
+    refine_prompt = prompts.get_prompt("extract_key_insights", "refine_prompt")
     
     update_progress(state, "Extracting key insights", 0.65)
     refiner = IterativeRefiner(LLMProvider.create_llm(config, json_mode=True), initial_prompt, refine_prompt, JsonOutputParser())
@@ -371,24 +344,11 @@ CONSOLIDATED JSON:"""
 @retry_on_failure()
 def extract_decisions(state: TranscriptState) -> TranscriptState:
     config, docs = state['config'], state['docs']
+    prompts = state['prompts']
     if not docs: return state
 
-    initial_prompt = PromptTemplate.from_template(
-        "You are an analyst. Extract explicit decisions discussed from the text below. Return a JSON object with a 'decisions' key containing a list of strings.\n\nTEXT:\n---\n{text}\n---\n\nJSON:"
-    )
-    refine_prompt = PromptTemplate.from_template(
-        """You are an analyst. You have an existing list of decisions. Add new decisions from the text below, avoiding duplicates.
-
-EXISTING DECISIONS:
-{existing_answer}
-
-NEW TEXT:
----
-{text}
----
-
-CONSOLIDATED JSON:"""
-    )
+    initial_prompt = prompts.get_prompt("extract_decisions", "initial_prompt")
+    refine_prompt = prompts.get_prompt("extract_decisions", "refine_prompt")
     
     update_progress(state, "Extracting decisions", 0.80)
     refiner = IterativeRefiner(LLMProvider.create_llm(config, json_mode=True), initial_prompt, refine_prompt, JsonOutputParser())
@@ -402,6 +362,7 @@ CONSOLIDATED JSON:"""
 def generate_executive_summary(state: TranscriptState) -> TranscriptState:
     """Generate a final executive summary by refining topic summaries."""
     config = state['config']
+    prompts = state['prompts']
     topic_summaries = state.get('analysis', {}).get('topic_summaries', {})
     if not topic_summaries:
         state.setdefault('warnings', []).append("No topic summaries available to generate executive overview.")
@@ -410,12 +371,8 @@ def generate_executive_summary(state: TranscriptState) -> TranscriptState:
     # Treat topic summaries as the documents to be refined
     summary_docs = [Document(page_content=summary) for summary in topic_summaries.values()]
     
-    initial_prompt = PromptTemplate.from_template(
-        "You are an Expert Analyst. Create a 1-sentence executive summary from the following topic summary:\n\nTOPIC SUMMARY:\n---\n{text}\n---\n\nEXECUTIVE SUMMARY:"
-    )
-    refine_prompt = PromptTemplate.from_template(
-        "You are an Expert Analyst. Refine the existing executive summary with the new topic summary below. The final overview must be a single, cohesive paragraph of 2-4 sentences.\n\nEXISTING EXECUTIVE SUMMARY:\n{existing_answer}\n\nNEW TOPIC SUMMARY:\n---\n{text}\n---\n\nREFINED EXECUTIVE SUMMARY:"
-    )
+    initial_prompt = prompts.get_prompt("generate_executive_summary", "initial_prompt")
+    refine_prompt = prompts.get_prompt("generate_executive_summary", "refine_prompt")
 
     update_progress(state, "Generating final executive summary", 0.95)
     refiner = IterativeRefiner(LLMProvider.create_llm(config), initial_prompt, refine_prompt, StrOutputParser())
@@ -547,14 +504,16 @@ def main():
         if args.google_model: config.google_model_name = args.google_model
         if args.output: config.output_file = args.output
         if args.format: config.output_format = args.format
-        
+
+        prompt_manager = PromptManager(config.prompts_file)
+
         if not args.transcript_path:
             parser.error("Transcript path is required")
             
         initial_state: TranscriptState = {
             'transcript_path': args.transcript_path, 'config': config, 'full_transcript': None,
             'docs': None, 'current_step': 'initialized', 'progress': 0.0, 'token_count': 0,
-            'analysis': {}, 'errors': [], 'warnings': [], 'processing_time': {}
+            'analysis': {}, 'errors': [], 'warnings': [], 'processing_time': {}, 'prompts': prompt_manager
         }
         
         logger.info("Starting meeting transcript analysis workflow...")

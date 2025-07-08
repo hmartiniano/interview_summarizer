@@ -1,0 +1,124 @@
+
+identify_topics:
+  initial_prompt: |
+    You are an analyst. Read the text chunk and identify main topics. Return a JSON object with a 'topics' key containing a list of strings.
+
+    TEXT CHUNK:
+    ---
+    {text}
+    ---
+
+    Respond with ONLY the JSON object.
+  refine_prompt: |
+    You are a topic consolidation agent. Refine an existing list of topics by analyzing a new text chunk and merging new information.
+
+    **Instructions:**
+    1.  **Analyze Existing Topics:** Review the `EXISTING TOPICS` provided.
+    2.  **Identify New Topics:** Read the `NEW TEXT CHUNK` and identify new topics.
+    3.  **Consolidate and Merge:** Compare each new topic to the existing list.
+        - If it is semantically identical or a slight variation of an existing topic, **do not add it**.
+        - If it is a sub-topic of an existing topic, **merge them** into a more comprehensive topic.
+        - If it is a completely new and distinct topic, **add it**.
+    4.  **Final Output:** Return a single JSON object with one key, "topics", containing the final, consolidated list of strings.
+
+    **EXISTING TOPICS (JSON string):**
+    {existing_answer}
+
+    **NEW TEXT CHUNK:**
+    ---
+    {text}
+    ---
+
+    Respond with ONLY the updated and consolidated JSON object.
+
+summarize_topics:
+  initial_prompt: |
+    You are an Expert Analyst. Your task is to provide a concise summary of expert opinions on **'{topic}'** based *only* on the text below.
+
+    TEXT CHUNK:
+    ---
+    {text}
+    ---
+
+    SUMMARY FOR '{topic}':
+  refine_prompt: |
+    You are an Expert Analyst. You have an existing summary for the topic **'{topic}'**. Refine this summary with the new context provided below. Focus ONLY on information relevant to '{topic}'.
+
+    EXISTING SUMMARY FOR '{topic}':
+    {existing_answer}
+
+    NEW CONTEXT:
+    ---
+    {text}
+    ---
+
+    REFINED SUMMARY FOR '{topic}':
+
+extract_key_insights:
+  initial_prompt: |
+    You are an analyst. Extract overarching key insights from the text below. Return a JSON object with an 'insights' key containing a list of strings (direct quotes attributed to the speaker).
+
+    TEXT:
+    ---
+    {text}
+    ---
+
+    JSON:
+  refine_prompt: |
+    You are an analyst. You have an existing list of key insights. Add new insights from the text below, avoiding duplicates.
+
+    EXISTING INSIGHTS:
+    {existing_answer}
+
+    NEW TEXT:
+    ---
+    {text}
+    ---
+
+    CONSOLIDATED JSON:
+
+extract_decisions:
+  initial_prompt: |
+    You are an analyst. Extract explicit decisions discussed from the text below. Return a JSON object with a 'decisions' key containing a list of strings.
+
+    TEXT:
+    ---
+    {text}
+    ---
+
+    JSON:
+  refine_prompt: |
+    You are an analyst. You have an existing list of decisions. Add new decisions from the text below, avoiding duplicates.
+
+    EXISTING DECISIONS:
+    {existing_answer}
+
+    NEW TEXT:
+    ---
+    {text}
+    ---
+
+    CONSOLIDATED JSON:
+
+generate_executive_summary:
+  initial_prompt: |
+    You are an Expert Analyst. Create a 1-sentence executive summary from the following topic summary:
+
+    TOPIC SUMMARY:
+    ---
+    {text}
+    ---
+
+    EXECUTIVE SUMMARY:
+  refine_prompt: |
+    You are an Expert Analyst. Refine the existing executive summary with the new topic summary below. The final overview must be a single, cohesive paragraph of 2-4 sentences.
+
+    EXISTING EXECUTIVE SUMMARY:
+    {existing_answer}
+
+    NEW TOPIC SUMMARY:
+    ---
+    {text}
+    ---
+
+    REFINED EXECUTIVE SUMMARY:
