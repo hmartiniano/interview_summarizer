@@ -264,7 +264,7 @@ class IterativeRefiner:
         for doc in docs[1:]:
             refine_context = {
                 "text": doc.page_content,
-                "existing_answer": json.dumps(result.dict()) if self.pydantic_model else result,
+                "existing_answer": json.dumps(result.model_dump()) if self.pydantic_model else result,
                 **(context or {})
             }
             if self.pydantic_model:
