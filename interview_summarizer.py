@@ -196,7 +196,7 @@ class DocumentValidator:
         logger.info(f"Transcript validation passed: {transcript_path} ({file_size_mb:.1f}MB)")
 
 
-def retry_on_failure(max_retries: int = 3, delay: float = 1.0):
+def retry_on_failure(max_retries: int = 3, delay: float = 1.0, exceptions=(Exception, )):
     """Decorator for retrying functions on failure."""
     def decorator(func):
         def wrapper(*args, **kwargs):
@@ -204,7 +204,7 @@ def retry_on_failure(max_retries: int = 3, delay: float = 1.0):
             for attempt in range(config.max_retries):
                 try:
                     return func(*args, **kwargs)
-                except Exception as e:
+                except exceptions as e:
                     if attempt == config.max_retries - 1:
                         logger.error(f"Function {func.__name__} failed after {config.max_retries} attempts: {e}")
                         raise
@@ -306,7 +306,7 @@ def load_and_split_transcript(state: TranscriptState) -> TranscriptState:
     return state
 
 @measure_time
-@retry_on_failure()
+@retry_on_failure(exceptions=(Exception, OutputParserException))
 def identify_topics(state: TranscriptState) -> TranscriptState:
     config, docs, prompts = state['config'], state['docs'], state['prompts']
     if not docs: return state
@@ -348,7 +348,7 @@ def summarize_topics(state: TranscriptState) -> TranscriptState:
     return state
 
 @measure_time
-@retry_on_failure()
+@retry_on_failure(exceptions=(Exception, OutputParserException))
 def extract_key_insights(state: TranscriptState) -> TranscriptState:
     config, docs = state['config'], state['docs']
     prompts = state['prompts']
@@ -365,7 +365,7 @@ def extract_key_insights(state: TranscriptState) -> TranscriptState:
     return state
 
 @measure_time
-@retry_on_failure()
+@retry_on_failure(exceptions=(Exception, OutputParserException))
 def extract_decisions(state: TranscriptState) -> TranscriptState:
     config, docs = state['config'], state['docs']
     prompts = state['prompts']
