@@ -28,12 +28,13 @@ import json
 from json.decoder import JSONDecodeError
 
 from langchain_core.runnables import Runnable
-from langchain_core.output_parsers import StrOutputParser, JsonOutputParser, BaseOutputParser
+from langchain_core.output_parsers import StrOutputParser, JsonOutputParser, BaseOutputParser, PydanticOutputParser
 from langchain_core.prompts import PromptTemplate
 from langchain_core.exceptions import OutputParserException
 from langchain.docstore.document import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langgraph.graph import StateGraph, END
+from pydantic import BaseModel, Field
 
 # --- Dynamic Imports for LLM Providers and Tokenizer ---
 try:
@@ -128,6 +129,16 @@ class TranscriptState(TypedDict):
 class TranscriptAnalyzerError(Exception):
     """Custom exception for analyzer errors."""
     pass
+
+# --- Pydantic Models for Structured Output ---
+class TopicsOutput(BaseModel):
+    topics: List[str] = Field(description="List of identified topics.")
+
+class InsightsOutput(BaseModel):
+    insights: List[str] = Field(description="List of key insights.")
+
+class DecisionsOutput(BaseModel):
+    decisions: List[str] = Field(description="List of decisions discussed.")
 
 
 # --- Core Components: LLM, Validation, Decorators ---
@@ -230,22 +241,35 @@ def measure_time(func):
 
 class IterativeRefiner:
     """A generic class to handle iterative refinement over document chunks."""
-    def __init__(self, llm: Runnable, initial_prompt: PromptTemplate, refine_prompt: PromptTemplate, output_parser: BaseOutputParser):
-        self.initial_chain = initial_prompt | llm | output_parser
-        self.refine_chain = refine_prompt | llm | output_parser
+    def __init__(self, llm: Runnable, initial_prompt: PromptTemplate, refine_prompt: PromptTemplate, output_parser: BaseOutputParser, pydantic_model: Optional[BaseModel] = None):
+        self.output_parser = output_parser
+        self.pydantic_model = pydantic_model
+
+        if pydantic_model:
+            self.initial_chain = initial_prompt | llm | PydanticOutputParser(pydantic_object=pydantic_model)
+            self.refine_chain = refine_prompt | llm | PydanticOutputParser(pydantic_object=pydantic_model)
+        else:
+            self.initial_chain = initial_prompt | llm | output_parser
+            self.refine_chain = refine_prompt | llm | output_parser
 
     def process(self, docs: List[Document], context: Dict[str, Any] = None) -> Any:
         if not docs: return None
         
         initial_context = {"text": docs[0].page_content, **(context or {})}
+        if self.pydantic_model:
+            initial_context["format_instructions"] = PydanticOutputParser(pydantic_object=self.pydantic_model).get_format_instructions()
+
         result = self.initial_chain.invoke(initial_context)
 
         for doc in docs[1:]:
             refine_context = {
                 "text": doc.page_content,
-                "existing_answer": json.dumps(result) if isinstance(result, (dict, list)) else result,
+                "existing_answer": json.dumps(result.dict()) if self.pydantic_model else result,
                 **(context or {})
             }
+            if self.pydantic_model:
+                refine_context["format_instructions"] = PydanticOutputParser(pydantic_object=self.pydantic_model).get_format_instructions()
+
             try:
                 result = self.refine_chain.invoke(refine_context)
             except OutputParserException as e:
@@ -291,9 +315,9 @@ def identify_topics(state: TranscriptState) -> TranscriptState:
     refine_prompt = prompts.get_prompt("identify_topics", "refine_prompt")
     
     update_progress(state, "Identifying topics", 0.05)
-    refiner = IterativeRefiner(LLMProvider.create_llm(config, json_mode=True), initial_prompt, refine_prompt, JsonOutputParser())
+    refiner = IterativeRefiner(LLMProvider.create_llm(config, json_mode=True), initial_prompt, refine_prompt, JsonOutputParser(), pydantic_model=TopicsOutput)
     parsed_output = refiner.process(docs)
-    state.setdefault('analysis', {})['topics'] = parsed_output.get('topics', [])
+    state.setdefault('analysis', {})['topics'] = parsed_output.topics
     logger.info(f"Identified {len(state['analysis']['topics'])} final topics.")
     return state
 
@@ -334,9 +358,9 @@ def extract_key_insights(state: TranscriptState) -> TranscriptState:
     refine_prompt = prompts.get_prompt("extract_key_insights", "refine_prompt")
     
     update_progress(state, "Extracting key insights", 0.65)
-    refiner = IterativeRefiner(LLMProvider.create_llm(config, json_mode=True), initial_prompt, refine_prompt, JsonOutputParser())
+    refiner = IterativeRefiner(LLMProvider.create_llm(config, json_mode=True), initial_prompt, refine_prompt, JsonOutputParser(), pydantic_model=InsightsOutput)
     parsed_output = refiner.process(docs)
-    state['analysis']['key_insights'] = parsed_output.get('insights', [])
+    state['analysis']['key_insights'] = parsed_output.insights
     logger.info(f"Extracted {len(state['analysis']['key_insights'])} key insights.")
     return state
 
@@ -351,9 +375,9 @@ def extract_decisions(state: TranscriptState) -> TranscriptState:
     refine_prompt = prompts.get_prompt("extract_decisions", "refine_prompt")
     
     update_progress(state, "Extracting decisions", 0.80)
-    refiner = IterativeRefiner(LLMProvider.create_llm(config, json_mode=True), initial_prompt, refine_prompt, JsonOutputParser())
+    refiner = IterativeRefiner(LLMProvider.create_llm(config, json_mode=True), initial_prompt, refine_prompt, JsonOutputParser(), pydantic_model=DecisionsOutput)
     parsed_output = refiner.process(docs)
-    state['analysis']['decisions_discussed'] = parsed_output.get('decisions', [])
+    state['analysis']['decisions_discussed'] = parsed_output.decisions
     logger.info(f"Extracted {len(state['analysis']['decisions_discussed'])} decisions.")
     return state
 

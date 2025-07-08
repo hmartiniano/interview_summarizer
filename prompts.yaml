@@ -8,7 +8,7 @@ identify_topics:
     {text}
     ---
 
-    Respond with ONLY the JSON object.
+    {format_instructions}
   refine_prompt: |
     You are a topic consolidation agent. Refine an existing list of topics by analyzing a new text chunk and merging new information.
 
@@ -29,7 +29,7 @@ identify_topics:
     {text}
     ---
 
-    Respond with ONLY the updated and consolidated JSON object.
+    {format_instructions}
 
 summarize_topics:
   initial_prompt: |
@@ -63,7 +63,7 @@ extract_key_insights:
     {text}
     ---
 
-    JSON:
+    {format_instructions}
   refine_prompt: |
     You are an analyst. You have an existing list of key insights. Add new insights from the text below, avoiding duplicates.
 
@@ -75,7 +75,7 @@ extract_key_insights:
     {text}
     ---
 
-    CONSOLIDATED JSON:
+    {format_instructions}
 
 extract_decisions:
   initial_prompt: |
@@ -86,7 +86,7 @@ extract_decisions:
     {text}
     ---
 
-    JSON:
+    {format_instructions}
   refine_prompt: |
     You are an analyst. You have an existing list of decisions. Add new decisions from the text below, avoiding duplicates.
 
@@ -98,7 +98,7 @@ extract_decisions:
     {text}
     ---
 
-    CONSOLIDATED JSON:
+    {format_instructions}
 
 generate_executive_summary:
   initial_prompt: |
