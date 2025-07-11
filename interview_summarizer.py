@@ -35,6 +35,7 @@ from langchain.docstore.document import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
+from langchain_core.caches import BaseCache # Added to resolve BaseCache undefined error
 
 # --- Dynamic Imports for LLM Providers and Tokenizer ---
 try:
@@ -53,6 +54,11 @@ try:
     import tiktoken
 except ImportError:
     tiktoken = None
+
+# Rebuild Pydantic models after all imports to resolve forward references
+if ChatOllama: ChatOllama.model_rebuild()
+if ChatOpenAI: ChatOpenAI.model_rebuild()
+if ChatGoogleGenerativeAI: ChatGoogleGenerativeAI.model_rebuild()
 
 
 # --- Setup Logging ---
