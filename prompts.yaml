@@ -102,14 +102,13 @@ extract_decisions:
 
 generate_executive_summary:
   initial_prompt: |
-    You are an Expert Analyst. Create a 1-sentence executive summary from the following topic summary:
+    You are an Expert Analyst. Create a concise executive summary of the following meeting transcript.
+    Focus on the main topics, key insights, and decisions. The summary should be 2-4 sentences long.
 
-    TOPIC SUMMARY:
+    MEETING TRANSCRIPT:
     ---
     {text}
     ---
-
-    EXECUTIVE SUMMARY:
   refine_prompt: |
     You are an Expert Analyst. Refine the existing executive summary with the new topic summary below. The final overview must be a single, cohesive paragraph of 2-4 sentences.
 

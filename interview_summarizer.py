@@ -79,6 +79,7 @@ class Config:
     enable_progress_bar: bool = True
     allowed_extensions: List[str] = field(default_factory=lambda: ['.txt'])
     prompts_file: str = "prompts.yaml" # New: Path to prompts YAML
+    process_full_transcript: bool = False # New: Process full transcript at once, bypasses iterative refiner
 
     @classmethod
     def from_yaml(cls, config_path: str) -> 'Config':
@@ -308,15 +309,28 @@ def load_and_split_transcript(state: TranscriptState) -> TranscriptState:
 @measure_time
 @retry_on_failure(exceptions=(Exception, OutputParserException))
 def identify_topics(state: TranscriptState) -> TranscriptState:
-    config, docs, prompts = state['config'], state['docs'], state['prompts']
-    if not docs: return state
+    config, docs, prompts, full_transcript = state['config'], state['docs'], state['prompts'], state['full_transcript']
+    if not docs and not full_transcript: return state
 
-    initial_prompt = prompts.get_prompt("identify_topics", "initial_prompt")
-    refine_prompt = prompts.get_prompt("identify_topics", "refine_prompt")
-    
     update_progress(state, "Identifying topics", 0.05)
-    refiner = IterativeRefiner(LLMProvider.create_llm(config, json_mode=True), initial_prompt, refine_prompt, JsonOutputParser(), pydantic_model=TopicsOutput)
-    parsed_output = refiner.process(docs)
+    llm = LLMProvider.create_llm(config, json_mode=True)
+    output_parser = JsonOutputParser()
+    pydantic_model = TopicsOutput
+
+    if config.process_full_transcript:
+        prompt = prompts.get_prompt("identify_topics", "initial_prompt")
+        context = {"text": full_transcript}
+        if pydantic_model:
+            context["format_instructions"] = PydanticOutputParser(pydantic_object=pydantic_model).get_format_instructions()
+        
+        chain = prompt | llm | PydanticOutputParser(pydantic_object=pydantic_model)
+        parsed_output = chain.invoke(context)
+    else:
+        initial_prompt = prompts.get_prompt("identify_topics", "initial_prompt")
+        refine_prompt = prompts.get_prompt("identify_topics", "refine_prompt")
+        refiner = IterativeRefiner(llm, initial_prompt, refine_prompt, output_parser, pydantic_model=pydantic_model)
+        parsed_output = refiner.process(docs)
+    
     state.setdefault('analysis', {})['topics'] = parsed_output.topics
     logger.info(f"Identified {len(state['analysis']['topics'])} final topics.")
     return state
@@ -324,25 +338,38 @@ def identify_topics(state: TranscriptState) -> TranscriptState:
 @measure_time
 @retry_on_failure()
 def summarize_topics(state: TranscriptState) -> TranscriptState:
-    config, docs = state['config'], state['docs']
+    config, docs, prompts, full_transcript = state['config'], state['docs'], state['prompts'], state['full_transcript']
     topics = state.get('analysis', {}).get('topics', [])
-    prompts = state['prompts']
-    if not topics or not docs: return state
+    if not topics or (not docs and not full_transcript): return state
 
-    initial_prompt = prompts.get_prompt("summarize_topics", "initial_prompt")
-    refine_prompt = prompts.get_prompt("summarize_topics", "refine_prompt")
+    update_progress(state, "Summarizing topics", 0.25)
+    llm = LLMProvider.create_llm(config)
+    output_parser = StrOutputParser()
 
     summaries = {}
     total_topics = len(topics)
-    llm = LLMProvider.create_llm(config)
-    refiner = IterativeRefiner(llm, initial_prompt, refine_prompt, StrOutputParser())
-    
-    for i, topic in enumerate(topics):
-        progress = 0.25 + (0.40 * ((i + 1) / total_topics))
-        update_progress(state, f"Summarizing topic {i+1}/{total_topics}: '{topic}'", progress)
+
+    if config.process_full_transcript:
+        for i, topic in enumerate(topics):
+            progress = 0.25 + (0.40 * ((i + 1) / total_topics))
+            update_progress(state, f"Summarizing topic {i+1}/{total_topics}: '{topic}'", progress)
+            
+            prompt = prompts.get_prompt("summarize_topics", "initial_prompt")
+            context = {"text": full_transcript, "topic": topic}
+            chain = prompt | llm | output_parser
+            summary = chain.invoke(context)
+            summaries[topic] = summary
+    else:
+        initial_prompt = prompts.get_prompt("summarize_topics", "initial_prompt")
+        refine_prompt = prompts.get_prompt("summarize_topics", "refine_prompt")
+        refiner = IterativeRefiner(llm, initial_prompt, refine_prompt, output_parser)
         
-        summary = refiner.process(docs, context={"topic": topic})
-        summaries[topic] = summary
+        for i, topic in enumerate(topics):
+            progress = 0.25 + (0.40 * ((i + 1) / total_topics))
+            update_progress(state, f"Summarizing topic {i+1}/{total_topics}: '{topic}'", progress)
+            
+            summary = refiner.process(docs, context={"topic": topic})
+            summaries[topic] = summary
     
     state['analysis']['topic_summaries'] = summaries
     return state
@@ -350,16 +377,28 @@ def summarize_topics(state: TranscriptState) -> TranscriptState:
 @measure_time
 @retry_on_failure(exceptions=(Exception, OutputParserException))
 def extract_key_insights(state: TranscriptState) -> TranscriptState:
-    config, docs = state['config'], state['docs']
-    prompts = state['prompts']
-    if not docs: return state
+    config, docs, prompts, full_transcript = state['config'], state['docs'], state['prompts'], state['full_transcript']
+    if not docs and not full_transcript: return state
 
-    initial_prompt = prompts.get_prompt("extract_key_insights", "initial_prompt")
-    refine_prompt = prompts.get_prompt("extract_key_insights", "refine_prompt")
-    
     update_progress(state, "Extracting key insights", 0.65)
-    refiner = IterativeRefiner(LLMProvider.create_llm(config, json_mode=True), initial_prompt, refine_prompt, JsonOutputParser(), pydantic_model=InsightsOutput)
-    parsed_output = refiner.process(docs)
+    llm = LLMProvider.create_llm(config, json_mode=True)
+    output_parser = JsonOutputParser()
+    pydantic_model = InsightsOutput
+
+    if config.process_full_transcript:
+        prompt = prompts.get_prompt("extract_key_insights", "initial_prompt")
+        context = {"text": full_transcript}
+        if pydantic_model:
+            context["format_instructions"] = PydanticOutputParser(pydantic_object=pydantic_model).get_format_instructions()
+        
+        chain = prompt | llm | PydanticOutputParser(pydantic_object=pydantic_model)
+        parsed_output = chain.invoke(context)
+    else:
+        initial_prompt = prompts.get_prompt("extract_key_insights", "initial_prompt")
+        refine_prompt = prompts.get_prompt("extract_key_insights", "refine_prompt")
+        refiner = IterativeRefiner(llm, initial_prompt, refine_prompt, output_parser, pydantic_model=pydantic_model)
+        parsed_output = refiner.process(docs)
+    
     state['analysis']['key_insights'] = parsed_output.insights
     logger.info(f"Extracted {len(state['analysis']['key_insights'])} key insights.")
     return state
@@ -367,16 +406,28 @@ def extract_key_insights(state: TranscriptState) -> TranscriptState:
 @measure_time
 @retry_on_failure(exceptions=(Exception, OutputParserException))
 def extract_decisions(state: TranscriptState) -> TranscriptState:
-    config, docs = state['config'], state['docs']
-    prompts = state['prompts']
-    if not docs: return state
+    config, docs, prompts, full_transcript = state['config'], state['docs'], state['prompts'], state['full_transcript']
+    if not docs and not full_transcript: return state
 
-    initial_prompt = prompts.get_prompt("extract_decisions", "initial_prompt")
-    refine_prompt = prompts.get_prompt("extract_decisions", "refine_prompt")
-    
     update_progress(state, "Extracting decisions", 0.80)
-    refiner = IterativeRefiner(LLMProvider.create_llm(config, json_mode=True), initial_prompt, refine_prompt, JsonOutputParser(), pydantic_model=DecisionsOutput)
-    parsed_output = refiner.process(docs)
+    llm = LLMProvider.create_llm(config, json_mode=True)
+    output_parser = JsonOutputParser()
+    pydantic_model = DecisionsOutput
+
+    if config.process_full_transcript:
+        prompt = prompts.get_prompt("extract_decisions", "initial_prompt")
+        context = {"text": full_transcript}
+        if pydantic_model:
+            context["format_instructions"] = PydanticOutputParser(pydantic_object=pydantic_model).get_format_instructions()
+        
+        chain = prompt | llm | PydanticOutputParser(pydantic_object=pydantic_model)
+        parsed_output = chain.invoke(context)
+    else:
+        initial_prompt = prompts.get_prompt("extract_decisions", "initial_prompt")
+        refine_prompt = prompts.get_prompt("extract_decisions", "refine_prompt")
+        refiner = IterativeRefiner(llm, initial_prompt, refine_prompt, output_parser, pydantic_model=pydantic_model)
+        parsed_output = refiner.process(docs)
+    
     state['analysis']['decisions_discussed'] = parsed_output.decisions
     logger.info(f"Extracted {len(state['analysis']['decisions_discussed'])} decisions.")
     return state
@@ -393,14 +444,23 @@ def generate_executive_summary(state: TranscriptState) -> TranscriptState:
         return state
 
     # Treat topic summaries as the documents to be refined
-    summary_docs = [Document(page_content=summary) for summary in topic_summaries.values()]
-    
-    initial_prompt = prompts.get_prompt("generate_executive_summary", "initial_prompt")
-    refine_prompt = prompts.get_prompt("generate_executive_summary", "refine_prompt")
-
-    update_progress(state, "Generating final executive summary", 0.95)
-    refiner = IterativeRefiner(LLMProvider.create_llm(config), initial_prompt, refine_prompt, StrOutputParser())
-    summary = refiner.process(summary_docs)
+    if config.process_full_transcript:
+        # If processing full transcript, the executive summary is generated directly from the full transcript
+        # as the previous steps would have already processed the full transcript.
+        # The prompt for executive summary should be designed to handle the full transcript.
+        initial_prompt = prompts.get_prompt("generate_executive_summary", "initial_prompt")
+        llm = LLMProvider.create_llm(config)
+        output_parser = StrOutputParser()
+        chain = initial_prompt | llm | output_parser
+        summary = chain.invoke({"text": state['full_transcript']})
+    else:
+        # Original iterative refinement for executive summary
+        summary_docs = [Document(page_content=summary) for summary in topic_summaries.values()]
+        initial_prompt = prompts.get_prompt("generate_executive_summary", "initial_prompt")
+        refine_prompt = prompts.get_prompt("generate_executive_summary", "refine_prompt")
+        update_progress(state, "Generating final executive summary", 0.95)
+        refiner = IterativeRefiner(LLMProvider.create_llm(config), initial_prompt, refine_prompt, StrOutputParser())
+        summary = refiner.process(summary_docs)
     
     state['analysis']['executive_overview'] = summary
     logger.info("Successfully generated final executive summary.")
@@ -526,6 +586,7 @@ def main():
     llm_group.add_argument("--ollama-model", help="Ollama model name to use (e.g., llama3)")
     llm_group.add_argument("--openai-model", help="OpenAI model name to use (e.g., gpt-4o)")
     llm_group.add_argument("--google-model", help="Google model name to use (e.g., gemini-1.5-flash)")
+    config_group.add_argument("--full-transcript", action="store_true", help="Process the full transcript at once, bypassing iterative refinement.")
     
     args = parser.parse_args()
     
