@@ -35,7 +35,8 @@ from langchain.docstore.document import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
-from langchain_core.caches import BaseCache # Added to resolve BaseCache undefined error
+from langchain_core.caches import BaseCache
+from langchain_core.callbacks import Callbacks # Added to resolve Callbacks undefined error # Added to resolve BaseCache undefined error
 
 # --- Dynamic Imports for LLM Providers and Tokenizer ---
 try:
