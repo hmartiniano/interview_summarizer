@@ -234,6 +234,17 @@ def update_progress(state: TranscriptState, step: str, progress: float) -> Trans
     return state
 
 
+def clean_llm_output(text: str) -> str:
+    """Removes common LLM end-of-turn tokens and excessive whitespace."""
+    # Specific tokens observed from some models
+    text = text.replace("</end_of_turn>", "")
+    text = text.replace("<|eot_id|>", "")
+    text = text.replace("<|endoftext|>", "")
+    # Remove leading/trailing whitespace and multiple newlines
+    text = text.strip()
+    text = os.linesep.join([s for s in text.splitlines() if s]) # Remove empty lines
+    return text
+
 def measure_time(func):
     """Decorator to measure function execution time."""
     def wrapper(*args, **kwargs):
@@ -283,7 +294,7 @@ class IterativeRefiner:
             except OutputParserException as e:
                 logger.warning(f"Output parsing failed, continuing with previous result. Error: {e}")
                 continue
-        return result
+        return clean_llm_output(result) if isinstance(result, str) else result
 
 # --- Graph Nodes: The Core Logic of the Analyzer ---
 
@@ -331,7 +342,8 @@ def identify_topics(state: TranscriptState) -> TranscriptState:
             context["format_instructions"] = PydanticOutputParser(pydantic_object=pydantic_model).get_format_instructions()
         
         chain = prompt | llm | PydanticOutputParser(pydantic_object=pydantic_model)
-        parsed_output = chain.invoke(context)
+        raw_output = chain.invoke(context)
+        parsed_output = clean_llm_output(raw_output) if isinstance(raw_output, str) else raw_output
     else:
         initial_prompt = prompts.get_prompt("identify_topics", "initial_prompt")
         refine_prompt = prompts.get_prompt("identify_topics", "refine_prompt")
@@ -364,7 +376,8 @@ def summarize_topics(state: TranscriptState) -> TranscriptState:
             prompt = prompts.get_prompt("summarize_topics", "initial_prompt")
             context = {"text": full_transcript, "topic": topic}
             chain = prompt | llm | output_parser
-            summary = chain.invoke(context)
+            raw_summary = chain.invoke(context)
+            summary = clean_llm_output(raw_summary) if isinstance(raw_summary, str) else raw_summary
             summaries[topic] = summary
     else:
         initial_prompt = prompts.get_prompt("summarize_topics", "initial_prompt")
@@ -399,7 +412,8 @@ def extract_key_insights(state: TranscriptState) -> TranscriptState:
             context["format_instructions"] = PydanticOutputParser(pydantic_object=pydantic_model).get_format_instructions()
         
         chain = prompt | llm | PydanticOutputParser(pydantic_object=pydantic_model)
-        parsed_output = chain.invoke(context)
+        raw_output = chain.invoke(context)
+        parsed_output = clean_llm_output(raw_output) if isinstance(raw_output, str) else raw_output
     else:
         initial_prompt = prompts.get_prompt("extract_key_insights", "initial_prompt")
         refine_prompt = prompts.get_prompt("extract_key_insights", "refine_prompt")
@@ -428,7 +442,8 @@ def extract_decisions(state: TranscriptState) -> TranscriptState:
             context["format_instructions"] = PydanticOutputParser(pydantic_object=pydantic_model).get_format_instructions()
         
         chain = prompt | llm | PydanticOutputParser(pydantic_object=pydantic_model)
-        parsed_output = chain.invoke(context)
+        raw_output = chain.invoke(context)
+        parsed_output = clean_llm_output(raw_output) if isinstance(raw_output, str) else raw_output
     else:
         initial_prompt = prompts.get_prompt("extract_decisions", "initial_prompt")
         refine_prompt = prompts.get_prompt("extract_decisions", "refine_prompt")
@@ -459,7 +474,8 @@ def generate_executive_summary(state: TranscriptState) -> TranscriptState:
         llm = LLMProvider.create_llm(config)
         output_parser = StrOutputParser()
         chain = initial_prompt | llm | output_parser
-        summary = chain.invoke({"text": state['full_transcript']})
+        raw_summary = chain.invoke({"text": state['full_transcript']})
+        summary = clean_llm_output(raw_summary) if isinstance(raw_summary, str) else raw_summary
     else:
         # Original iterative refinement for executive summary
         summary_docs = [Document(page_content=summary) for summary in topic_summaries.values()]
