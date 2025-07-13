@@ -318,9 +318,14 @@ def load_and_split_transcript(state: TranscriptState) -> TranscriptState:
         except Exception as e:
             logger.warning(f"Could not count tokens: {e}")
     
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=config.chunk_size, chunk_overlap=config.chunk_overlap)
-    docs = text_splitter.create_documents([full_text])
-    logger.info(f"Split transcript into {len(docs)} chunks.")
+    docs = None # Initialize docs to None
+    if not config.process_full_transcript: # Only split if not processing full transcript
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=config.chunk_size, chunk_overlap=config.chunk_overlap)
+        docs = text_splitter.create_documents([full_text])
+        logger.info(f"Split transcript into {len(docs)} chunks.")
+    else:
+        logger.info("Processing full transcript, skipping chunking.")
+
     state.update(docs=docs, full_transcript=full_text, token_count=token_count)
     return state
 
