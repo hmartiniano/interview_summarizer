@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "interview-summarizer"
+version = "0.1.0"
+description = "A LangChain/LangGraph program designed to analyze meeting transcripts, extract key information, and generate concise summaries."
+authors = [
+  { name="Hugo", email="hugo@example.com" },
+]
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "langchain",
+    "langgraph",
+    "langchain-openai",
+    "langchain-google-genai",
+    "langchain-ollama",
+    "pydantic",
+    "pyyaml",
+    "tiktoken",
+    "setuptools"
+]
+
+[project.scripts]
+interview-summarizer = "interview_summarizer:main"
+
+[project.urls]
+"Homepage" = "https://github.com/hugo/interview_summarizer"
+"Bug Tracker" = "https://github.com/hugo/interview_summarizer/issues"

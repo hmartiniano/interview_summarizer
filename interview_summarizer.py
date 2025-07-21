@@ -62,11 +62,6 @@ if ChatOpenAI: ChatOpenAI.model_rebuild()
 if ChatGoogleGenerativeAI: ChatGoogleGenerativeAI.model_rebuild()
 
 
-# --- Setup Logging ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
-
 # --- Configuration and State Management ---
 
 @dataclass
@@ -74,6 +69,7 @@ class Config:
     """Configuration class for the Transcript Analyzer."""
     model_provider: str = "ollama"
     ollama_model_name: str = "llama3"
+    ollama_model_options: Dict[str, Any] = field(default_factory=lambda: {"num_ctx": 16384, "num_predict": 8192})
     openai_model_name: str = "gpt-4o"
     google_model_name: str = "gemini-1.5-flash"
     chunk_size: int = 4000
@@ -148,6 +144,13 @@ class InsightsOutput(BaseModel):
 class DecisionsOutput(BaseModel):
     decisions: List[str] = Field(description="List of decisions discussed.")
 
+class MergedTopicsOutput(BaseModel):
+    """Pydantic model for the output of the topic merging step."""
+    merged_topics: Dict[str, List[str]] = Field(
+        description="A dictionary where keys are the new, concise, merged topic titles "
+                    "and values are the original topic strings that were merged under that key."
+    )
+
 
 # --- Core Components: LLM, Validation, Decorators ---
 
@@ -168,7 +171,11 @@ class LLMProvider:
     def _create_ollama_llm(config: Config, json_mode: bool):
         if not ChatOllama: raise ImportError("Ollama not found. Run 'pip install langchain-ollama'")
         logger.info(f"Initializing ChatOllama model: {config.ollama_model_name}")
-        params = {'model': config.ollama_model_name, 'temperature': 0}
+        params = {
+            'model': config.ollama_model_name, 
+            'temperature': 0,
+            **config.ollama_model_options
+        }
         if json_mode: params['format'] = 'json'
         return ChatOllama(**params)
 
@@ -240,6 +247,8 @@ def clean_llm_output(text: str) -> str:
     text = text.replace("</end_of_turn>", "")
     text = text.replace("<|eot_id|>", "")
     text = text.replace("<|endoftext|>", "")
+    text = text.replace("<think>", "")
+    text = text.replace("</think>", "")
     # Remove leading/trailing whitespace and multiple newlines
     text = text.strip()
     text = os.linesep.join([s for s in text.splitlines() if s]) # Remove empty lines
@@ -356,8 +365,47 @@ def identify_topics(state: TranscriptState) -> TranscriptState:
         parsed_output = refiner.process(docs)
     
     state.setdefault('analysis', {})['topics'] = parsed_output.topics
-    logger.info(f"Identified {len(state['analysis']['topics'])} final topics.")
+    logger.info(f"Identified {len(state['analysis']['topics'])} initial topics: {parsed_output.topics}")
     return state
+
+@measure_time
+@retry_on_failure(exceptions=(Exception, OutputParserException))
+def merge_overlapping_topics(state: TranscriptState) -> TranscriptState:
+    """Identifies and merges overlapping topics using an LLM call."""
+    config, prompts = state['config'], state['prompts']
+    topics = state.get('analysis', {}).get('topics', [])
+    if not topics or len(topics) < 2:
+        logger.info("Skipping topic merging due to insufficient number of topics.")
+        # To maintain a consistent data structure, format the topics as if they were merged
+        state['analysis']['merged_topics'] = {topic: [topic] for topic in topics}
+        return state
+
+    update_progress(state, "Merging overlapping topics", 0.20)
+    llm = LLMProvider.create_llm(config, json_mode=True)
+    pydantic_model = MergedTopicsOutput
+
+    prompt = prompts.get_prompt("merge_topics", "initial_prompt")
+    context = {
+        "topics": "\n".join(f"- {topic}" for topic in topics),
+        "format_instructions": PydanticOutputParser(pydantic_object=pydantic_model).get_format_instructions()
+    }
+
+    chain = prompt | llm | PydanticOutputParser(pydantic_object=pydantic_model)
+    try:
+        parsed_output = chain.invoke(context)
+        # Replace the original topics with the merged ones
+        state['analysis']['topics'] = list(parsed_output.merged_topics.keys())
+        state['analysis']['merged_topics'] = parsed_output.merged_topics
+        logger.info(f"Merged {len(topics)} topics into {len(state['analysis']['topics'])} unique topics.")
+        logger.info(f"Topic merge mapping: {parsed_output.merged_topics}")
+    except Exception as e:
+        logger.error(f"Failed to merge topics: {e}. Proceeding with original topics.")
+        state.setdefault('warnings', []).append(f"Topic merging failed: {e}")
+        # Ensure the structure is consistent even on failure
+        state['analysis']['merged_topics'] = {topic: [topic] for topic in topics}
+
+    return state
+
 
 @measure_time
 @retry_on_failure()
@@ -578,6 +626,7 @@ def build_analyzer_graph():
     workflow = StateGraph(TranscriptState)
     workflow.add_node("load_and_split", load_and_split_transcript)
     workflow.add_node("identify_topics", identify_topics)
+    workflow.add_node("merge_overlapping_topics", merge_overlapping_topics) # New node
     workflow.add_node("summarize_topics", summarize_topics)
     workflow.add_node("extract_key_insights", extract_key_insights)
     workflow.add_node("extract_decisions", extract_decisions)
@@ -585,7 +634,8 @@ def build_analyzer_graph():
 
     workflow.set_entry_point("load_and_split")
     workflow.add_edge("load_and_split", "identify_topics")
-    workflow.add_edge("identify_topics", "summarize_topics")
+    workflow.add_edge("identify_topics", "merge_overlapping_topics") # New edge
+    workflow.add_edge("merge_overlapping_topics", "summarize_topics") # New edge
     workflow.add_edge("summarize_topics", "extract_key_insights")
     workflow.add_edge("extract_key_insights", "extract_decisions")
     workflow.add_edge("extract_decisions", "generate_executive_summary")
@@ -607,11 +657,13 @@ def main():
     # Configuration Options
     config_group = parser.add_argument_group("Configuration Options")
     config_group.add_argument("--config", help="Path to YAML configuration file")
+    config_group.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], help="Set the logging level.")
 
     # LLM Model Options
     llm_group = parser.add_argument_group("LLM Model Options")
     llm_group.add_argument("--model", choices=["ollama", "openai", "google"], help="LLM provider")
     llm_group.add_argument("--ollama-model", help="Ollama model name to use (e.g., llama3)")
+    llm_group.add_argument("--ollama-options", type=json.loads, help='JSON string of options for Ollama (e.g., "{\"num_ctx\": 8192}")')
     llm_group.add_argument("--openai-model", help="OpenAI model name to use (e.g., gpt-4o)")
     llm_group.add_argument("--google-model", help="Google model name to use (e.g., gemini-1.5-flash)")
     config_group.add_argument("--full-transcript", action="store_true", help="Process the full transcript at once, bypassing iterative refinement.")
@@ -622,10 +674,12 @@ def main():
         config = Config.from_yaml(args.config) if args.config else Config()
         if args.model: config.model_provider = args.model
         if args.ollama_model: config.ollama_model_name = args.ollama_model
+        if args.ollama_options: config.ollama_model_options.update(args.ollama_options)
         if args.openai_model: config.openai_model_name = args.openai_model
         if args.google_model: config.google_model_name = args.google_model
         if args.output: config.output_file = args.output
         if args.format: config.output_format = args.format
+        if args.full_transcript: config.process_full_transcript = args.full_transcript
 
         prompt_manager = PromptManager(config.prompts_file)
 
@@ -664,5 +718,16 @@ def main():
 
 
 if __name__ == "__main__":
+    # --- Setup Logging ---
+    log_level = logging.INFO
+    if '--log-level' in sys.argv:
+        try:
+            level_index = sys.argv.index('--log-level') + 1
+            if level_index < len(sys.argv):
+                log_level = getattr(logging, sys.argv[level_index].upper(), logging.INFO)
+        except (ValueError, IndexError):
+            pass # Use default if argument is malformed
+    logging.basicConfig(level=log_level, format='%(asctime)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger(__name__)
     main()
 

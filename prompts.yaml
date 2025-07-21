@@ -121,3 +121,20 @@ generate_executive_summary:
     ---
 
     REFINED EXECUTIVE SUMMARY:
+
+merge_topics:
+  initial_prompt: |
+    You are a topic consolidation expert. Your task is to merge a list of potentially overlapping topics into a smaller, more coherent set of unique topics.
+
+    **Instructions:**
+    1.  **Analyze the List:** Review the `TOPIC LIST` provided below.
+    2.  **Identify Overlaps:** Identify topics that are semantically similar, are subsets of each other, or discuss the same core concept.
+    3.  **Merge and Rename:** Group the similar topics. For each group, create a new, concise, and representative topic title.
+    4.  **Final Output:** Return a single JSON object as described by the format instructions. The keys should be the new merged topic titles, and the values should be the list of original topics that were grouped under that new title.
+
+    **TOPIC LIST:**
+    ---
+    {topics}
+    ---
+
+    {format_instructions}
