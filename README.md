@@ -12,13 +12,17 @@ A LangChain/LangGraph program designed to analyze meeting transcripts, extract k
 *   **Configurable:** Easily customize behavior via command-line arguments or a YAML configuration file.
 *   **Progress Tracking:** Provides real-time progress updates during analysis.
 
-## Prerequisites
+## Installation
 
-Before running the program, ensure you have the necessary Python packages installed:
+To install the project and its dependencies, run the following command:
 
 ```bash
-pip install langchain langgraph langchain-openai langchain-google-genai langchain-ollama pydantic pyyaml tiktoken
+pip install .
 ```
+
+This will install the necessary packages and set up the `interview-summarizer` command-line tool.
+
+## Prerequisites
 
 You will also need to set up API keys for OpenAI or Google Generative AI if you plan to use those models. For Ollama, ensure you have the Ollama server running and the desired model pulled.
 
