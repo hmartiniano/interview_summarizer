@@ -681,7 +681,13 @@ def main():
         if args.format: config.output_format = args.format
         if args.full_transcript: config.process_full_transcript = args.full_transcript
 
-        prompt_manager = PromptManager(config.prompts_file)
+        # Try to find prompts.yaml relative to the script, then in the current directory
+        script_dir = Path(__file__).parent
+        prompts_path = script_dir / config.prompts_file
+        if not prompts_path.exists():
+            prompts_path = Path(config.prompts_file) # Fallback to current dir
+
+        prompt_manager = PromptManager(str(prompts_path))
 
         if not args.transcript_path:
             parser.error("Transcript path is required")

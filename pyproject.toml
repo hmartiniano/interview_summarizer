@@ -28,6 +28,9 @@ dependencies = [
     "setuptools"
 ]
 
+[tool.setuptools]
+include-package-data = true
+
 [project.scripts]
 interview-summarizer = "interview_summarizer:main"
 
