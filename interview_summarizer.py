@@ -84,7 +84,7 @@ class Config:
     ollama_model_name: str = "llama3"
     ollama_model_options: Dict[str, Any] = field(default_factory=lambda: {"num_ctx": 16384, "num_predict": 8192})
     openai_model_name: str = "gpt-4o"
-    google_model_name: str = "models/gemini-1.5-flash-latest"
+    google_model_name: str = "gemini-1.5-flash-latest"
     chunk_size: int = 4000
     chunk_overlap: int = 400
     max_file_size_mb: int = 50

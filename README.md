@@ -49,7 +49,7 @@ python interview_summarizer.py --config config.yaml
 *   `--model <ollama|openai|google>`: Specify the LLM provider to use. Overrides `model_provider` in config.
 *   `--ollama-model <name>`: Ollama model name (e.g., `llama3`). Overrides `ollama_model_name` in config.
 *   `--openai-model <name>`: OpenAI model name (e.g., `gpt-4o`). Overrides `openai_model_name` in config.
-*   `--google-model <name>`: Google model name (e.g., `models/gemini-1.5-flash-latest`). Overrides `google_model_name` in config.
+*   `--google-model <name>`: Google model name (e.g., `gemini-1.5-flash-latest`). Overrides `google_model_name` in config.
 
 ### Example `prompts.yaml`
 
