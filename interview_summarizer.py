@@ -62,6 +62,19 @@ if ChatOpenAI: ChatOpenAI.model_rebuild()
 if ChatGoogleGenerativeAI: ChatGoogleGenerativeAI.model_rebuild()
 
 
+# --- Setup Logging ---
+log_level = logging.INFO
+if '--log-level' in sys.argv:
+    try:
+        level_index = sys.argv.index('--log-level') + 1
+        if level_index < len(sys.argv):
+            log_level = getattr(logging, sys.argv[level_index].upper(), logging.INFO)
+    except (ValueError, IndexError):
+        pass # Use default if argument is malformed
+logging.basicConfig(level=log_level, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+
 # --- Configuration and State Management ---
 
 @dataclass
@@ -724,16 +737,5 @@ def main():
 
 
 if __name__ == "__main__":
-    # --- Setup Logging ---
-    log_level = logging.INFO
-    if '--log-level' in sys.argv:
-        try:
-            level_index = sys.argv.index('--log-level') + 1
-            if level_index < len(sys.argv):
-                log_level = getattr(logging, sys.argv[level_index].upper(), logging.INFO)
-        except (ValueError, IndexError):
-            pass # Use default if argument is malformed
-    logging.basicConfig(level=log_level, format='%(asctime)s - %(levelname)s - %(message)s')
-    logger = logging.getLogger(__name__)
     main()
 
