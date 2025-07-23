@@ -280,6 +280,11 @@ def measure_time(func):
 
 # --- Generic Processing Logic ---
 
+def _deduplicate_list(input_list: List[str]) -> List[str]:
+    """Deduplicates a list of strings, preserving order."""
+    return list(dict.fromkeys(input_list))
+
+
 class IterativeRefiner:
     """A generic class to handle iterative refinement over document chunks."""
     def __init__(self, llm: Runnable, initial_prompt: PromptTemplate, refine_prompt: PromptTemplate, output_parser: BaseOutputParser, pydantic_model: Optional[BaseModel] = None):
@@ -486,7 +491,7 @@ def extract_key_insights(state: TranscriptState) -> TranscriptState:
         refiner = IterativeRefiner(llm, initial_prompt, refine_prompt, output_parser, pydantic_model=pydantic_model)
         parsed_output = refiner.process(docs)
     
-    state['analysis']['key_insights'] = parsed_output.insights
+    state['analysis']['key_insights'] = _deduplicate_list(parsed_output.insights)
     logger.info(f"Extracted {len(state['analysis']['key_insights'])} key insights.")
     return state
 
@@ -516,7 +521,7 @@ def extract_decisions(state: TranscriptState) -> TranscriptState:
         refiner = IterativeRefiner(llm, initial_prompt, refine_prompt, output_parser, pydantic_model=pydantic_model)
         parsed_output = refiner.process(docs)
     
-    state['analysis']['decisions_discussed'] = parsed_output.decisions
+    state['analysis']['decisions_discussed'] = _deduplicate_list(parsed_output.decisions)
     logger.info(f"Extracted {len(state['analysis']['decisions_discussed'])} decisions.")
     return state
 
