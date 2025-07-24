@@ -46,10 +46,8 @@ python interview_summarizer.py --config config.yaml
 *   `--output <file_path>`: Path to save the analysis results.
 *   `--format <console|json|markdown>`: Output format for the results. Defaults to `console`.
 *   `--config <file_path>`: Path to a YAML configuration file.
-*   `--model <ollama|openai|google>`: Specify the LLM provider to use. Overrides `model_provider` in config.
-*   `--ollama-model <name>`: Ollama model name (e.g., `llama3`). Overrides `ollama_model_name` in config.
-*   `--openai-model <name>`: OpenAI model name (e.g., `gpt-4o`). Overrides `openai_model_name` in config.
-*   `--google-model <name>`: Google model name (e.g., `gemini-1.5-flash-latest`). Overrides `google_model_name` in config.
+*   `--provider <ollama|openai|google>`: Specify the LLM provider to use. Overrides `model_provider` in config.
+*   `--model <name>`: Specify the model name for the chosen provider (e.g., `llama3`, `gpt-4o`, `gemini-1.5-flash-latest`). Overrides the default model name for the selected provider in config.
 
 ### Example `prompts.yaml`
 
@@ -118,7 +116,7 @@ generate_executive_summary:
 
 ```yaml
 model_provider: openai
-openai_model_name: gpt-4o-mini
+model_name: gpt-4o-mini
 chunk_size: 4000
 chunk_overlap: 400
 max_file_size_mb: 50

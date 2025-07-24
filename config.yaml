@@ -1,0 +1,13 @@
+model_provider: ollama
+model_name: llama3
+chunk_size: 4000
+chunk_overlap: 400
+max_file_size_mb: 50
+output_format: console
+output_file: null
+max_retries: 3
+retry_delay: 2.0
+enable_progress_bar: true
+allowed_extensions: ['.txt']
+prompts_file: prompts.yaml
+process_full_transcript: false

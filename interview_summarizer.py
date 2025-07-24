@@ -81,10 +81,8 @@ logger = logging.getLogger(__name__)
 class Config:
     """Configuration class for the Transcript Analyzer."""
     model_provider: str = "ollama"
-    ollama_model_name: str = "llama3"
+    model_name: str = "llama3" # Unified model name field
     ollama_model_options: Dict[str, Any] = field(default_factory=lambda: {"num_ctx": 16384, "num_predict": 8192})
-    openai_model_name: str = "gpt-4o"
-    google_model_name: str = "gemini-1.5-flash-latest"
     chunk_size: int = 4000
     chunk_overlap: int = 400
     max_file_size_mb: int = 50
@@ -183,9 +181,9 @@ class LLMProvider:
     @staticmethod
     def _create_ollama_llm(config: Config, json_mode: bool):
         if not ChatOllama: raise ImportError("Ollama not found. Run 'pip install langchain-ollama'")
-        logger.info(f"Initializing ChatOllama model: {config.ollama_model_name}")
+        logger.info(f"Initializing ChatOllama model: {config.model_name}")
         params = {
-            'model': config.ollama_model_name, 
+            'model': config.model_name, 
             'temperature': 0,
             **config.ollama_model_options
         }
@@ -196,8 +194,8 @@ class LLMProvider:
     def _create_openai_llm(config: Config, json_mode: bool):
         if not ChatOpenAI: raise ImportError("OpenAI not found. Run 'pip install langchain-openai'")
         if not os.getenv("OPENAI_API_KEY"): raise ValueError("OPENAI_API_KEY not set")
-        logger.info(f"Initializing ChatOpenAI model: {config.openai_model_name}")
-        params = {'model': config.openai_model_name, 'temperature': 0}
+        logger.info(f"Initializing ChatOpenAI model: {config.model_name}")
+        params = {'model': config.model_name, 'temperature': 0}
         if json_mode: params['response_format'] = {"type": "json_object"}
         return ChatOpenAI(**params)
 
@@ -205,8 +203,8 @@ class LLMProvider:
     def _create_google_llm(config: Config, json_mode: bool):
         if not ChatGoogleGenerativeAI: raise ImportError("Google GenAI not found. Run 'pip install langchain-google-genai'")
         if not os.getenv("GOOGLE_API_KEY"): raise ValueError("GOOGLE_API_KEY not set")
-        logger.info(f"Initializing ChatGoogleGenerativeAI model: {config.google_model_name}")
-        return ChatGoogleGenerativeAI(model=config.google_model_name, temperature=0)
+        logger.info(f"Initializing ChatGoogleGenerativeAI model: {config.model_name}")
+        return ChatGoogleGenerativeAI(model=config.model_name, temperature=0)
 
 
 class DocumentValidator:
@@ -679,22 +677,17 @@ def main():
 
     # LLM Model Options
     llm_group = parser.add_argument_group("LLM Model Options")
-    llm_group.add_argument("--model", choices=["ollama", "openai", "google"], help="LLM provider")
-    llm_group.add_argument("--ollama-model", help="Ollama model name to use (e.g., llama3)")
+    llm_group.add_argument("--provider", choices=["ollama", "openai", "google"], help="LLM provider")
+    llm_group.add_argument("--model", help="Model name to use (e.g., llama3, gpt-4o, gemini-1.5-flash)")
     llm_group.add_argument("--ollama-options", type=json.loads, help='JSON string of options for Ollama (e.g., "{\"num_ctx\": 8192}")')
-    llm_group.add_argument("--openai-model", help="OpenAI model name to use (e.g., gpt-4o)")
-    llm_group.add_argument("--google-model", help="Google model name to use (e.g., gemini-1.5-flash)")
     config_group.add_argument("--full-transcript", action="store_true", help="Process the full transcript at once, bypassing iterative refinement.")
     
     args = parser.parse_args()
     
     try:
         config = Config.from_yaml(args.config) if args.config else Config()
-        if args.model: config.model_provider = args.model
-        if args.ollama_model: config.ollama_model_name = args.ollama_model
-        if args.ollama_options: config.ollama_model_options.update(args.ollama_options)
-        if args.openai_model: config.openai_model_name = args.openai_model
-        if args.google_model: config.google_model_name = args.google_model
+        if args.provider: config.model_provider = args.provider
+        if args.model: config.model_name = args.model
         if args.output: config.output_file = args.output
         if args.format: config.output_format = args.format
         if args.full_transcript: config.process_full_transcript = args.full_transcript
