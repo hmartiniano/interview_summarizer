@@ -95,6 +95,7 @@ class Config:
     allowed_extensions: List[str] = field(default_factory=lambda: ['.txt'])
     prompts_file: str = "prompts.yaml" # New: Path to prompts YAML
     process_full_transcript: bool = False # New: Process full transcript at once, bypasses iterative refiner
+    openai_api_base_url: Optional[str] = None # New: Base URL for OpenAI API
 
     @classmethod
     def from_yaml(cls, config_path: str) -> 'Config':
@@ -197,6 +198,7 @@ class LLMProvider:
         logger.info(f"Initializing ChatOpenAI model: {config.model_name}")
         params = {'model': config.model_name, 'temperature': 0}
         if json_mode: params['response_format'] = {"type": "json_object"}
+        if config.openai_api_base_url: params['base_url'] = config.openai_api_base_url
         return ChatOpenAI(**params)
 
     @staticmethod
@@ -680,6 +682,7 @@ def main():
     llm_group.add_argument("--provider", choices=["ollama", "openai", "google"], help="LLM provider")
     llm_group.add_argument("--model", help="Model name to use (e.g., llama3, gpt-4o, gemini-1.5-flash)")
     llm_group.add_argument("--ollama-options", type=json.loads, help='JSON string of options for Ollama (e.g., "{\"num_ctx\": 8192}")')
+    llm_group.add_argument("--openai-api-base-url", help="Alternative base URL for OpenAI API (e.g., for local LLMs)")
     config_group.add_argument("--full-transcript", action="store_true", help="Process the full transcript at once, bypassing iterative refinement.")
     
     args = parser.parse_args()
@@ -691,6 +694,7 @@ def main():
         if args.output: config.output_file = args.output
         if args.format: config.output_format = args.format
         if args.full_transcript: config.process_full_transcript = args.full_transcript
+        if args.openai_api_base_url: config.openai_api_base_url = args.openai_api_base_url
 
         prompts_content = resources.read_text('interview_summarizer', config.prompts_file)
         prompt_manager = PromptManager(prompts_content)

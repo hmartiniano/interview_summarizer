@@ -17,7 +17,7 @@ A LangChain/LangGraph program designed to analyze meeting transcripts, extract k
 To install the project and its dependencies, run the following command:
 
 ```bash
-pip install .
+pip install interview-summarizer
 ```
 
 This will install the necessary packages and set up the `interview-summarizer` command-line tool.
@@ -31,13 +31,13 @@ You will also need to set up API keys for OpenAI or Google Generative AI if you 
 You can run the program by providing a transcript file and specifying your desired LLM model and output options.
 
 ```bash
-python interview_summarizer.py <path_to_transcript.txt> --model <ollama|openai|google> [options]
+interview-summarizer <path_to_transcript.txt> --model <ollama|openai|google> [options]
 ```
 
 Alternatively, you can use a YAML configuration file:
 
 ```bash
-python interview_summarizer.py --config config.yaml
+interview-summarizer --config config.yaml
 ```
 
 ### Command-Line Arguments
@@ -48,69 +48,14 @@ python interview_summarizer.py --config config.yaml
 *   `--config <file_path>`: Path to a YAML configuration file.
 *   `--provider <ollama|openai|google>`: Specify the LLM provider to use. Overrides `model_provider` in config.
 *   `--model <name>`: Specify the model name for the chosen provider (e.g., `llama3`, `gpt-4o`, `gemini-1.5-flash-latest`). Overrides the default model name for the selected provider in config.
+*   `--openai-api-base-url <url>`: Specify an alternative base URL for the OpenAI API (e.g., `http://localhost:1234/v1` for local LLMs).
 
-### Example `prompts.yaml`
+### Configuration Files
 
-The program uses a `prompts.yaml` file to manage prompt templates. A basic structure might look like this:
+The program uses `prompts.yaml` and `config.yaml` for its default settings and prompt templates. These files are included in the installed package.
 
-```yaml
-identify_topics:
-  initial_prompt: |
-    You are an expert in meeting analysis. Identify the main topics discussed in the following text.
-    Return a JSON list of topics.
-    Text: {text}
-    {format_instructions}
-  refine_prompt: |
-    You are an expert in meeting analysis. You have already identified the following topics: {existing_answer}.
-    Now, refine and add any new topics from the following text.
-    Return a JSON list of topics.
-    Text: {text}
-    {format_instructions}
-
-summarize_topics:
-  initial_prompt: |
-    Summarize the following text focusing on the topic: "{topic}".
-    Text: {text}
-  refine_prompt: |
-    You have already summarized the topic "{topic}" as: {existing_answer}.
-    Now, refine and expand this summary using the following text.
-    Text: {text}
-
-extract_key_insights:
-  initial_prompt: |
-    From the following text, extract key insights.
-    Return a JSON list of insights.
-    Text: {text}
-    {format_instructions}
-  refine_prompt: |
-    You have already extracted the following insights: {existing_answer}.
-    Now, refine and add any new key insights from the following text.
-    Return a JSON list of insights.
-    Text: {text}
-    {format_instructions}
-
-extract_decisions:
-  initial_prompt: |
-    From the following text, identify any decisions made or advised.
-    Return a JSON list of decisions.
-    Text: {text}
-    {format_instructions}
-  refine_prompt: |
-    You have already identified the following decisions: {existing_answer}.
-    Now, refine and add any new decisions from the following text.
-    Return a JSON list of decisions.
-    Text: {text}
-    {format_instructions}
-
-generate_executive_summary:
-  initial_prompt: |
-    Based on the following topic summaries, generate a concise executive overview of the meeting.
-    Summaries: {text}
-  refine_prompt: |
-    You have already generated a partial executive overview: {existing_answer}.
-    Now, refine and expand this overview using the following additional summaries.
-    Summaries: {text}
-```
+*   You can find the default `config.yaml` and `prompts.yaml` in the installed package directory (e.g., `path/to/your/python/site-packages/interview_summarizer/`).
+*   To customize, you can copy these files, modify them, and then specify your custom `config.yaml` using the `--config` command-line argument.
 
 ### Example `config.yaml`
 
@@ -127,11 +72,12 @@ retry_delay: 2.0
 enable_progress_bar: true
 allowed_extensions: ['.txt']
 prompts_file: prompts.yaml
+openai_api_base_url: http://localhost:1234/v1 # Example for local LLM or proxy
 ```
 
 ## Program Flow
 
-The `interview_summarizer.py` program orchestrates a multi-step analysis of meeting transcripts using a LangChain/LangGraph workflow.
+The `interview-summarizer` program orchestrates a multi-step analysis of meeting transcripts using a LangChain/LangGraph workflow.
 
 1.  **Initialization:**
     *   The program starts by parsing command-line arguments and loading configuration settings from a `config.yaml` file (or using defaults).
