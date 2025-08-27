@@ -1,10 +1,10 @@
-# Meeting Transcript Summarizer
+# Meeting Summarizer
 
 A LangChain/LangGraph program designed to analyze meeting transcripts, extract key information, and generate concise summaries. This tool leverages advanced LLM capabilities with robust error handling, flexible configuration, and an iterative refinement approach for accurate results.
 
 ## Features
 
-*   **Automated Analysis:** Extracts topics, key insights, and decisions from meeting transcripts.
+*   **Automated Analysis:** Extracts topics, key insights, decisions, and action items from meeting transcripts.
 *   **Iterative Refinement:** Processes documents chunk-by-chunk, ensuring focused and accurate analysis.
 *   **LLM Flexibility:** Supports multiple LLM providers (Ollama, OpenAI, Google Generative AI) with dynamic loading.
 *   **Structured Output:** Utilizes Pydantic models to ensure consistent and structured output from LLM interactions.
@@ -17,10 +17,10 @@ A LangChain/LangGraph program designed to analyze meeting transcripts, extract k
 To install the project and its dependencies, run the following command:
 
 ```bash
-pip install .
+pip install meeting-summarizer
 ```
 
-This will install the necessary packages and set up the `interview-summarizer` command-line tool.
+This will install the necessary packages and set up the `meeting-summarizer` command-line tool.
 
 ## Prerequisites
 
@@ -31,111 +31,70 @@ You will also need to set up API keys for OpenAI or Google Generative AI if you 
 You can run the program by providing a transcript file and specifying your desired LLM model and output options.
 
 ```bash
-python interview_summarizer.py <path_to_transcript.txt> --model <ollama|openai|google> [options]
+meeting-summarizer [transcript_path] --model [provider]/<model_name> [options]
 ```
 
 Alternatively, you can use a YAML configuration file:
 
 ```bash
-python interview_summarizer.py --config config.yaml
+meeting-summarizer --config config.yaml
 ```
 
-### Command-Line Arguments
+## Configuration
 
-*   `<transcript_path>`: Path to the transcript file (.txt). (Required if not using `--config` with a pre-defined path).
-*   `--output <file_path>`: Path to save the analysis results.
-*   `--format <console|json|markdown>`: Output format for the results. Defaults to `console`.
-*   `--config <file_path>`: Path to a YAML configuration file.
-*   `--provider <ollama|openai|google>`: Specify the LLM provider to use. Overrides `model_provider` in config.
-*   `--model <name>`: Specify the model name for the chosen provider (e.g., `llama3`, `gpt-4o`, `gemini-1.5-flash-latest`). Overrides the default model name for the selected provider in config.
+The application can be configured in multiple ways, with the following order of precedence (highest to lowest):
 
-### Example `prompts.yaml`
+1.  **Command-Line Arguments:** Direct, explicit settings for a single run.
+2.  **Environment Variables:** Ideal for containerized environments or CI/CD systems.
+3.  **YAML Configuration File:** For defining a base set of preferences.
+4.  **Default Values:** Hardcoded defaults in the application.
 
-The program uses a `prompts.yaml` file to manage prompt templates. A basic structure might look like this:
+### 1. Command-Line Arguments
 
-```yaml
-identify_topics:
-  initial_prompt: |
-    You are an expert in meeting analysis. Identify the main topics discussed in the following text.
-    Return a JSON list of topics.
-    Text: {text}
-    {format_instructions}
-  refine_prompt: |
-    You are an expert in meeting analysis. You have already identified the following topics: {existing_answer}.
-    Now, refine and add any new topics from the following text.
-    Return a JSON list of topics.
-    Text: {text}
-    {format_instructions}
+*   `transcript_path`: Path to the transcript file (.txt).
+*   `--model`: Specify the model in `provider/model_name` format (e.g., `openai/gpt-4o`). Overrides `MODEL_PROVIDER` and `MODEL_NAME` environment variables.
+*   `--output`: Path to save the analysis results. Overrides `OUTPUT_FILE`.
+*   `--format`: Output format (`console`, `json`, `markdown`). Overrides `OUTPUT_FORMAT`.
+*   `--config`: Path to a YAML configuration file.
+*   `--log-level`: Set the logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`). Overrides `LOG_LEVEL`.
+*   `--interview`: Use interview-focused prompts.
+*   `--iterative-analysis`, `--merge-topics`, etc.: Flags to control specific workflow steps.
 
-summarize_topics:
-  initial_prompt: |
-    Summarize the following text focusing on the topic: "{topic}".
-    Text: {text}
-  refine_prompt: |
-    You have already summarized the topic "{topic}" as: {existing_answer}.
-    Now, refine and expand this summary using the following text.
-    Text: {text}
+### 2. Environment Variables
 
-extract_key_insights:
-  initial_prompt: |
-    From the following text, extract key insights.
-    Return a JSON list of insights.
-    Text: {text}
-    {format_instructions}
-  refine_prompt: |
-    You have already extracted the following insights: {existing_answer}.
-    Now, refine and add any new key insights from the following text.
-    Return a JSON list of insights.
-    Text: {text}
-    {format_instructions}
+You can set environment variables to configure the application. For local development, you can create a `.env` file in the project root (a `.env.example` is provided).
 
-extract_decisions:
-  initial_prompt: |
-    From the following text, identify any decisions made or advised.
-    Return a JSON list of decisions.
-    Text: {text}
-    {format_instructions}
-  refine_prompt: |
-    You have already identified the following decisions: {existing_answer}.
-    Now, refine and add any new decisions from the following text.
-    Return a JSON list of decisions.
-    Text: {text}
-    {format_instructions}
+*   `MODEL_PROVIDER`: The LLM provider (e.g., `ollama`, `openai`).
+*   `MODEL_NAME`: The name of the model (e.g., `llama3`, `gpt-4o`).
+*   `OPENAI_API_BASE_URL`: An alternative base URL for the OpenAI API.
+*   `OLLAMA_MODEL_OPTIONS`: A JSON string for Ollama options (e.g., `'{"num_ctx": 8192}'`).
+*   `OUTPUT_FORMAT`: The output format.
+*   `OUTPUT_FILE`: The path to the output file.
+*   `LOG_LEVEL`: The logging level.
 
-generate_executive_summary:
-  initial_prompt: |
-    Based on the following topic summaries, generate a concise executive overview of the meeting.
-    Summaries: {text}
-  refine_prompt: |
-    You have already generated a partial executive overview: {existing_answer}.
-    Now, refine and expand this overview using the following additional summaries.
-    Summaries: {text}
-```
+API keys (`OPENAI_API_KEY`, `GOOGLE_API_KEY`) are also read from environment variables by the underlying LangChain libraries.
 
-### Example `config.yaml`
+### 3. YAML Configuration File
 
+You can use a `config.yaml` file to set base configurations. Use the `--config` argument to specify a path to your file.
+
+**Example `config.yaml`:**
 ```yaml
 model_provider: openai
 model_name: gpt-4o-mini
-chunk_size: 4000
-chunk_overlap: 400
-max_file_size_mb: 50
 output_format: markdown
 output_file: analysis_results.md
-max_retries: 3
-retry_delay: 2.0
-enable_progress_bar: true
-allowed_extensions: ['.txt']
-prompts_file: prompts.yaml
+# ... other settings
 ```
+
 
 ## Program Flow
 
-The `interview_summarizer.py` program orchestrates a multi-step analysis of meeting transcripts using a LangChain/LangGraph workflow.
+The `meeting-summarizer` program orchestrates a multi-step analysis of meeting transcripts using a LangChain/LangGraph workflow.
 
 1.  **Initialization:**
     *   The program starts by parsing command-line arguments and loading configuration settings from a `config.yaml` file (or using defaults).
-    *   Prompt templates are loaded from `prompts.yaml` using a `PromptManager`.
+    *   Prompt templates are loaded from `prompts_meeting.yaml` using a `PromptManager`.
     *   An initial state is prepared, containing the transcript path, configuration, and placeholders for results.
 
 2.  **Workflow Definition (LangGraph):**
@@ -145,6 +104,7 @@ The `interview_summarizer.py` program orchestrates a multi-step analysis of meet
         *   `summarize_topics`: Generates summaries for each identified topic.
         *   `extract_key_insights`: Extracts overarching key insights.
         *   `extract_decisions`: Pinpoints decisions made or advised.
+        *   `extract_action_items` (optional): Extracts action items.
         *   `generate_executive_summary`: Creates a final executive overview.
     *   Edges connect these nodes, ensuring a structured progression through the analysis.
 

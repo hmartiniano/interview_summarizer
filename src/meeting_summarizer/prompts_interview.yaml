@@ -1,4 +1,3 @@
-
 identify_topics:
   initial_prompt: |
     You are an analyst. Read the text chunk and identify main topics. Return a JSON object with a 'topics' key containing a list of strings.
@@ -138,3 +137,17 @@ merge_topics:
     ---
 
     {format_instructions}
+
+extract_topic_text:
+  initial_prompt: |
+    You are an expert at extracting relevant information. From the TEXT below, extract all the sentences and paragraphs that are relevant to the TOPIC.
+    Return only the extracted text, without any additional commentary.
+
+    TOPIC: "{topic}"
+
+    TEXT:
+    ---
+    {text}
+    ---
+
+    EXTRACTED TEXT:

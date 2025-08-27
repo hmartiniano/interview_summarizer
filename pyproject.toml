@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "interview-summarizer"
+name = "meeting-summarizer"
 version = "0.1.0"
 description = "A LangChain/LangGraph program designed to analyze meeting transcripts, extract key information, and generate concise summaries."
 authors = [
@@ -25,7 +25,9 @@ dependencies = [
     "pydantic",
     "pyyaml",
     "tiktoken",
-    "setuptools"
+    "setuptools",
+    "pytest",
+    "python-dotenv"
 ]
 
 [tool.setuptools]
@@ -35,11 +37,11 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-"interview_summarizer" = ["*.yaml"]
+"meeting_summarizer" = ["*.yaml"]
 
 [project.scripts]
-interview-summarizer = "interview_summarizer.main:main"
+meeting-summarizer = "meeting_summarizer.main:main"
 
 [project.urls]
-"Homepage" = "https://github.com/hugo/interview_summarizer"
-"Bug Tracker" = "https://github.com/hugo/interview_summarizer/issues"
+"Homepage" = "https://github.com/hugo/meeting_summarizer"
+"Bug Tracker" = "https://github.com/hugo/meeting_summarizer/issues"

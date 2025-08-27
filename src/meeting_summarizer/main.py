@@ -25,8 +25,10 @@ from typing import List, Dict, Any, TypedDict, Optional, Callable
 import logging
 import yaml
 import json
+import csv
 from json.decoder import JSONDecodeError
 from importlib import resources
+from dotenv import load_dotenv
 
 from langchain_core.runnables import Runnable
 from langchain_core.output_parsers import StrOutputParser, JsonOutputParser, BaseOutputParser, PydanticOutputParser
@@ -93,8 +95,12 @@ class Config:
     retry_delay: float = 2.0
     enable_progress_bar: bool = True
     allowed_extensions: List[str] = field(default_factory=lambda: ['.txt'])
-    prompts_file: str = "prompts.yaml" # New: Path to prompts YAML
-    process_full_transcript: bool = False # New: Process full transcript at once, bypasses iterative refiner
+    interview_mode: bool = False # New: Use interview prompts instead of meeting prompts
+    merge_topics: bool = False # New: Whether to merge topics
+    iterative_analysis: bool = False # New: Process full transcript at once, bypasses iterative refiner
+    separate_topic_summarization: bool = False # New: Summarize topics from extracted text
+    extract_action_items: bool = False # New: Extract action items
+    openai_api_base_url: Optional[str] = None # New: Base URL for OpenAI API
 
     @classmethod
     def from_yaml(cls, config_path: str) -> 'Config':
@@ -145,6 +151,10 @@ class TranscriptAnalyzerError(Exception):
     """Custom exception for analyzer errors."""
     pass
 
+class TranscriptValidationError(TranscriptAnalyzerError):
+    """Custom exception for validation errors that should not be retried."""
+    pass
+
 # --- Pydantic Models for Structured Output ---
 class TopicsOutput(BaseModel):
     topics: List[str] = Field(description="List of identified topics.")
@@ -154,6 +164,9 @@ class InsightsOutput(BaseModel):
 
 class DecisionsOutput(BaseModel):
     decisions: List[str] = Field(description="List of decisions discussed.")
+
+class ActionItemsOutput(BaseModel):
+    action_items: List[str] = Field(description="List of extracted action items.")
 
 class MergedTopicsOutput(BaseModel):
     """Pydantic model for the output of the topic merging step."""
@@ -197,6 +210,7 @@ class LLMProvider:
         logger.info(f"Initializing ChatOpenAI model: {config.model_name}")
         params = {'model': config.model_name, 'temperature': 0}
         if json_mode: params['response_format'] = {"type": "json_object"}
+        if config.openai_api_base_url: params['base_url'] = config.openai_api_base_url
         return ChatOpenAI(**params)
 
     @staticmethod
@@ -212,10 +226,10 @@ class DocumentValidator:
     @staticmethod
     def validate_transcript(transcript_path: str, config: Config) -> None:
         path = Path(transcript_path)
-        if not path.exists(): raise TranscriptAnalyzerError(f"File not found: {transcript_path}")
-        if path.suffix.lower() not in config.allowed_extensions: raise TranscriptAnalyzerError(f"Unsupported file type: {path.suffix}")
+        if not path.exists(): raise TranscriptValidationError(f"File not found: {transcript_path}")
+        if path.suffix.lower() not in config.allowed_extensions: raise TranscriptValidationError(f"Unsupported file type: {path.suffix}")
         file_size_mb = path.stat().st_size / (1024 * 1024)
-        if file_size_mb > config.max_file_size_mb: raise TranscriptAnalyzerError(f"File too large: {file_size_mb:.1f}MB > {config.max_file_size_mb}MB")
+        if file_size_mb > config.max_file_size_mb: raise TranscriptValidationError(f"File too large: {file_size_mb:.1f}MB > {config.max_file_size_mb}MB")
         try:
             with open(transcript_path, 'r', encoding='utf-8') as f: f.read(1024)
         except Exception as e: raise TranscriptAnalyzerError(f"Cannot read file: {e}")
@@ -230,6 +244,10 @@ def retry_on_failure(max_retries: int = 3, delay: float = 1.0, exceptions=(Excep
             for attempt in range(config.max_retries):
                 try:
                     return func(*args, **kwargs)
+                except TranscriptValidationError as e:
+                    # Do not retry on validation errors
+                    logger.error(f"Validation failed for {func.__name__}: {e}")
+                    raise
                 except exceptions as e:
                     if attempt == config.max_retries - 1:
                         logger.error(f"Function {func.__name__} failed after {config.max_retries} attempts: {e}")
@@ -248,7 +266,7 @@ def update_progress(state: TranscriptState, step: str, progress: float) -> Trans
     state['progress'] = progress
     if state['config'].enable_progress_bar:
         progress_bar = "█" * int(progress * 40) + "░" * (40 - int(progress * 40))
-        print(f"\r[{progress_bar}] {progress:.1%} - {step}", end="", flush=True)
+        print(f"[{progress_bar}] {progress:.1%} - {step}", end="", flush=True)
     return state
 
 
@@ -344,7 +362,7 @@ def load_and_split_transcript(state: TranscriptState) -> TranscriptState:
             logger.warning(f"Could not count tokens: {e}")
     
     docs = None # Initialize docs to None
-    if not config.process_full_transcript: # Only split if not processing full transcript
+    if config.iterative_analysis: # Only split if using iterative analysis
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=config.chunk_size, chunk_overlap=config.chunk_overlap)
         docs = text_splitter.create_documents([full_text])
         logger.info(f"Split transcript into {len(docs)} chunks.")
@@ -365,7 +383,12 @@ def identify_topics(state: TranscriptState) -> TranscriptState:
     output_parser = JsonOutputParser()
     pydantic_model = TopicsOutput
 
-    if config.process_full_transcript:
+    if config.iterative_analysis:
+        initial_prompt = prompts.get_prompt("identify_topics", "initial_prompt")
+        refine_prompt = prompts.get_prompt("identify_topics", "refine_prompt")
+        refiner = IterativeRefiner(llm, initial_prompt, refine_prompt, output_parser, pydantic_model=pydantic_model)
+        parsed_output = refiner.process(docs)
+    else:
         prompt = prompts.get_prompt("identify_topics", "initial_prompt")
         context = {"text": full_transcript}
         if pydantic_model:
@@ -374,13 +397,9 @@ def identify_topics(state: TranscriptState) -> TranscriptState:
         chain = prompt | llm | PydanticOutputParser(pydantic_object=pydantic_model)
         raw_output = chain.invoke(context)
         parsed_output = clean_llm_output(raw_output) if isinstance(raw_output, str) else raw_output
-    else:
-        initial_prompt = prompts.get_prompt("identify_topics", "initial_prompt")
-        refine_prompt = prompts.get_prompt("identify_topics", "refine_prompt")
-        refiner = IterativeRefiner(llm, initial_prompt, refine_prompt, output_parser, pydantic_model=pydantic_model)
-        parsed_output = refiner.process(docs)
     
     state.setdefault('analysis', {})['topics'] = parsed_output.topics
+    state['analysis']['original_topics'] = parsed_output.topics
     logger.info(f"Identified {len(state['analysis']['topics'])} initial topics: {parsed_output.topics}")
     return state
 
@@ -406,14 +425,32 @@ def merge_overlapping_topics(state: TranscriptState) -> TranscriptState:
         "format_instructions": PydanticOutputParser(pydantic_object=pydantic_model).get_format_instructions()
     }
 
-    chain = prompt | llm | PydanticOutputParser(pydantic_object=pydantic_model)
+    chain = prompt | llm | JsonOutputParser()  # Use a less strict parser first
     try:
-        parsed_output = chain.invoke(context)
+        raw_output = chain.invoke(context)
+        
+        # --- Data Sanitization Step ---
+        # Ensure all values in the dictionary are lists of strings
+        if isinstance(raw_output, dict) and 'merged_topics' in raw_output:
+            cleaned_topics = {}
+            for key, value in raw_output['merged_topics'].items():
+                if isinstance(value, list):
+                    cleaned_topics[key] = [str(v) for v in value] # Ensure all items in list are strings
+                elif isinstance(value, str):
+                    cleaned_topics[key] = [value] # Convert string to list of one string
+                else:
+                    # If the value is neither a list nor a string, skip it or handle as an error
+                    logger.warning(f"Skipping malformed topic '{key}' in merge_topics output: value is not a list or string.")
+            raw_output['merged_topics'] = cleaned_topics
+
+        # Now, parse with the strict Pydantic model
+        parsed_output = MergedTopicsOutput.model_validate(raw_output)
+
         # Replace the original topics with the merged ones
         state['analysis']['topics'] = list(parsed_output.merged_topics.keys())
         state['analysis']['merged_topics'] = parsed_output.merged_topics
         logger.info(f"Merged {len(topics)} topics into {len(state['analysis']['topics'])} unique topics.")
-        logger.info(f"Topic merge mapping: {parsed_output.merged_topics}")
+        logger.debug(f"Topic merge mapping: {parsed_output.merged_topics}")
     except Exception as e:
         logger.error(f"Failed to merge topics: {e}. Proceeding with original topics.")
         state.setdefault('warnings', []).append(f"Topic merging failed: {e}")
@@ -424,10 +461,43 @@ def merge_overlapping_topics(state: TranscriptState) -> TranscriptState:
 
 
 @measure_time
+@retry_on_failure(exceptions=(Exception, OutputParserException))
+def extract_topic_texts(state: TranscriptState) -> TranscriptState:
+    """Extracts relevant text for each topic from the full transcript."""
+    config, prompts, full_transcript = state['config'], state['prompts'], state['full_transcript']
+    topics = state.get('analysis', {}).get('topics', [])
+    if not topics or not full_transcript:
+        logger.info("Skipping topic text extraction due to no topics or transcript.")
+        return state
+
+    update_progress(state, "Extracting topic texts", 0.22)
+    llm = LLMProvider.create_llm(config)
+    output_parser = StrOutputParser()
+    
+    topic_texts = {}
+    total_topics = len(topics)
+    for i, topic in enumerate(topics):
+        logger.info(f"Extracting text for topic: '{topic}'")
+        progress = 0.22 + (0.23 * ((i + 1) / total_topics))
+        update_progress(state, f"Extracting text for topic {i+1}/{total_topics}: '{topic}'", progress)
+        
+        prompt = prompts.get_prompt("extract_topic_text", "initial_prompt")
+        context = {"text": full_transcript, "topic": topic}
+        chain = prompt | llm | output_parser
+        extracted_text = chain.invoke(context)
+        topic_texts[topic] = clean_llm_output(extracted_text)
+
+    state.setdefault('analysis', {})['topic_texts'] = topic_texts
+    logger.info("Finished extracting topic texts.")
+    return state
+
+
+@measure_time
 @retry_on_failure()
 def summarize_topics(state: TranscriptState) -> TranscriptState:
     config, docs, prompts, full_transcript = state['config'], state['docs'], state['prompts'], state['full_transcript']
     topics = state.get('analysis', {}).get('topics', [])
+    topic_texts = state.get('analysis', {}).get('topic_texts') # Get extracted texts
     if not topics or (not docs and not full_transcript): return state
 
     update_progress(state, "Summarizing topics", 0.25)
@@ -437,27 +507,39 @@ def summarize_topics(state: TranscriptState) -> TranscriptState:
     summaries = {}
     total_topics = len(topics)
 
-    if config.process_full_transcript:
-        for i, topic in enumerate(topics):
-            progress = 0.25 + (0.40 * ((i + 1) / total_topics))
-            update_progress(state, f"Summarizing topic {i+1}/{total_topics}: '{topic}'", progress)
-            
-            prompt = prompts.get_prompt("summarize_topics", "initial_prompt")
-            context = {"text": full_transcript, "topic": topic}
-            chain = prompt | llm | output_parser
-            raw_summary = chain.invoke(context)
-            summary = clean_llm_output(raw_summary) if isinstance(raw_summary, str) else raw_summary
-            summaries[topic] = summary
-    else:
+    # Determine the text source for summarization
+    text_source = topic_texts if config.separate_topic_summarization and topic_texts else full_transcript
+
+    if config.iterative_analysis:
         initial_prompt = prompts.get_prompt("summarize_topics", "initial_prompt")
         refine_prompt = prompts.get_prompt("summarize_topics", "refine_prompt")
         refiner = IterativeRefiner(llm, initial_prompt, refine_prompt, output_parser)
         
         for i, topic in enumerate(topics):
+            logger.info(f"Summarizing topic: '{topic}'")
             progress = 0.25 + (0.40 * ((i + 1) / total_topics))
             update_progress(state, f"Summarizing topic {i+1}/{total_topics}: '{topic}'", progress)
             
             summary = refiner.process(docs, context={"topic": topic})
+            summaries[topic] = summary
+    else:
+        for i, topic in enumerate(topics):
+            logger.info(f"Summarizing topic: '{topic}'")
+            progress = 0.25 + (0.40 * ((i + 1) / total_topics))
+            update_progress(state, f"Summarizing topic {i+1}/{total_topics}: '{topic}'", progress)
+            
+            # Use topic-specific text if available, otherwise use the full transcript
+            text_to_summarize = text_source.get(topic) if isinstance(text_source, dict) else text_source
+            if not text_to_summarize:
+                logger.warning(f"No text found for topic '{topic}', skipping summarization.")
+                summaries[topic] = "No relevant text found for this topic."
+                continue
+
+            prompt = prompts.get_prompt("summarize_topics", "initial_prompt")
+            context = {"text": text_to_summarize, "topic": topic}
+            chain = prompt | llm | output_parser
+            raw_summary = chain.invoke(context)
+            summary = clean_llm_output(raw_summary) if isinstance(raw_summary, str) else raw_summary
             summaries[topic] = summary
     
     state['analysis']['topic_summaries'] = summaries
@@ -474,7 +556,12 @@ def extract_key_insights(state: TranscriptState) -> TranscriptState:
     output_parser = JsonOutputParser()
     pydantic_model = InsightsOutput
 
-    if config.process_full_transcript:
+    if config.iterative_analysis:
+        initial_prompt = prompts.get_prompt("extract_key_insights", "initial_prompt")
+        refine_prompt = prompts.get_prompt("extract_key_insights", "refine_prompt")
+        refiner = IterativeRefiner(llm, initial_prompt, refine_prompt, output_parser, pydantic_model=pydantic_model)
+        parsed_output = refiner.process(docs)
+    else:
         prompt = prompts.get_prompt("extract_key_insights", "initial_prompt")
         context = {"text": full_transcript}
         if pydantic_model:
@@ -483,11 +570,6 @@ def extract_key_insights(state: TranscriptState) -> TranscriptState:
         chain = prompt | llm | PydanticOutputParser(pydantic_object=pydantic_model)
         raw_output = chain.invoke(context)
         parsed_output = clean_llm_output(raw_output) if isinstance(raw_output, str) else raw_output
-    else:
-        initial_prompt = prompts.get_prompt("extract_key_insights", "initial_prompt")
-        refine_prompt = prompts.get_prompt("extract_key_insights", "refine_prompt")
-        refiner = IterativeRefiner(llm, initial_prompt, refine_prompt, output_parser, pydantic_model=pydantic_model)
-        parsed_output = refiner.process(docs)
     
     state['analysis']['key_insights'] = _deduplicate_list(parsed_output.insights)
     logger.info(f"Extracted {len(state['analysis']['key_insights'])} key insights.")
@@ -504,7 +586,12 @@ def extract_decisions(state: TranscriptState) -> TranscriptState:
     output_parser = JsonOutputParser()
     pydantic_model = DecisionsOutput
 
-    if config.process_full_transcript:
+    if config.iterative_analysis:
+        initial_prompt = prompts.get_prompt("extract_decisions", "initial_prompt")
+        refine_prompt = prompts.get_prompt("extract_decisions", "refine_prompt")
+        refiner = IterativeRefiner(llm, initial_prompt, refine_prompt, output_parser, pydantic_model=pydantic_model)
+        parsed_output = refiner.process(docs)
+    else:
         prompt = prompts.get_prompt("extract_decisions", "initial_prompt")
         context = {"text": full_transcript}
         if pydantic_model:
@@ -513,14 +600,40 @@ def extract_decisions(state: TranscriptState) -> TranscriptState:
         chain = prompt | llm | PydanticOutputParser(pydantic_object=pydantic_model)
         raw_output = chain.invoke(context)
         parsed_output = clean_llm_output(raw_output) if isinstance(raw_output, str) else raw_output
-    else:
-        initial_prompt = prompts.get_prompt("extract_decisions", "initial_prompt")
-        refine_prompt = prompts.get_prompt("extract_decisions", "refine_prompt")
-        refiner = IterativeRefiner(llm, initial_prompt, refine_prompt, output_parser, pydantic_model=pydantic_model)
-        parsed_output = refiner.process(docs)
     
     state['analysis']['decisions_discussed'] = _deduplicate_list(parsed_output.decisions)
     logger.info(f"Extracted {len(state['analysis']['decisions_discussed'])} decisions.")
+    return state
+
+@measure_time
+@retry_on_failure(exceptions=(Exception, OutputParserException))
+def extract_action_items(state: TranscriptState) -> TranscriptState:
+    """Extracts action items from the transcript."""
+    config, docs, prompts, full_transcript = state['config'], state['docs'], state['prompts'], state['full_transcript']
+    if not docs and not full_transcript: return state
+
+    update_progress(state, "Extracting action items", 0.85)
+    llm = LLMProvider.create_llm(config, json_mode=True)
+    output_parser = JsonOutputParser()
+    pydantic_model = ActionItemsOutput
+
+    if config.iterative_analysis:
+        initial_prompt = prompts.get_prompt("extract_action_items", "initial_prompt")
+        refine_prompt = prompts.get_prompt("extract_action_items", "refine_prompt")
+        refiner = IterativeRefiner(llm, initial_prompt, refine_prompt, output_parser, pydantic_model=pydantic_model)
+        parsed_output = refiner.process(docs)
+    else:
+        prompt = prompts.get_prompt("extract_action_items", "initial_prompt")
+        context = {"text": full_transcript}
+        if pydantic_model:
+            context["format_instructions"] = PydanticOutputParser(pydantic_object=pydantic_model).get_format_instructions()
+        
+        chain = prompt | llm | PydanticOutputParser(pydantic_object=pydantic_model)
+        raw_output = chain.invoke(context)
+        parsed_output = clean_llm_output(raw_output) if isinstance(raw_output, str) else raw_output
+    
+    state.setdefault('analysis', {})['action_items'] = _deduplicate_list(parsed_output.action_items)
+    logger.info(f"Extracted {len(state['analysis']['action_items'])} action items.")
     return state
 
 @measure_time
@@ -535,7 +648,15 @@ def generate_executive_summary(state: TranscriptState) -> TranscriptState:
         return state
 
     # Treat topic summaries as the documents to be refined
-    if config.process_full_transcript:
+    if config.iterative_analysis:
+        # Original iterative refinement for executive summary
+        summary_docs = [Document(page_content=summary) for summary in topic_summaries.values()]
+        initial_prompt = prompts.get_prompt("generate_executive_summary", "initial_prompt")
+        refine_prompt = prompts.get_prompt("generate_executive_summary", "refine_prompt")
+        update_progress(state, "Generating final executive summary", 0.95)
+        refiner = IterativeRefiner(LLMProvider.create_llm(config), initial_prompt, refine_prompt, StrOutputParser())
+        summary = refiner.process(summary_docs)
+    else:
         # If processing full transcript, the executive summary is generated directly from the full transcript
         # as the previous steps would have already processed the full transcript.
         # The prompt for executive summary should be designed to handle the full transcript.
@@ -545,14 +666,6 @@ def generate_executive_summary(state: TranscriptState) -> TranscriptState:
         chain = initial_prompt | llm | output_parser
         raw_summary = chain.invoke({"text": state['full_transcript']})
         summary = clean_llm_output(raw_summary) if isinstance(raw_summary, str) else raw_summary
-    else:
-        # Original iterative refinement for executive summary
-        summary_docs = [Document(page_content=summary) for summary in topic_summaries.values()]
-        initial_prompt = prompts.get_prompt("generate_executive_summary", "initial_prompt")
-        refine_prompt = prompts.get_prompt("generate_executive_summary", "refine_prompt")
-        update_progress(state, "Generating final executive summary", 0.95)
-        refiner = IterativeRefiner(LLMProvider.create_llm(config), initial_prompt, refine_prompt, StrOutputParser())
-        summary = refiner.process(summary_docs)
     
     state['analysis']['executive_overview'] = summary
     logger.info("Successfully generated final executive summary.")
@@ -574,16 +687,48 @@ def save_results(state: TranscriptState) -> None:
         }
         if config.output_format == 'json':
             with open(output_path, 'w', encoding='utf-8') as f: json.dump(output_content, f, indent=2)
+        elif config.output_format == 'yaml':
+            with open(output_path, 'w', encoding='utf-8') as f: yaml.dump(output_content, f, default_flow_style=False, sort_keys=False)
+        elif config.output_format in ['csv', 'tsv']:
+            delimiter = ',' if config.output_format == 'csv' else '\t'
+            with open(output_path, 'w', encoding='utf-8', newline='') as f:
+                writer = csv.writer(f, delimiter=delimiter)
+                writer.writerow(['category', 'item'])
+                for insight in analysis_data.get('key_insights', []):
+                    writer.writerow(['insight', insight])
+                for decision in analysis_data.get('decisions_discussed', []):
+                    writer.writerow(['decision', decision])
+                for action_item in analysis_data.get('action_items', []):
+                    writer.writerow(['action_item', action_item])
         elif config.output_format == 'markdown':
             with open(output_path, 'w', encoding='utf-8') as f:
                 f.write(f"# Meeting Transcript Analysis\n\n**File:** {state['transcript_path']}\n\n")
                 if 'executive_overview' in analysis_data: f.write(f"## 1. Executive Overview\n\n{analysis_data['executive_overview']}\n\n")
-                f.write(f"## 2. Topics Discussed and Expert's Opinions\n\n")
-                topics, topic_summaries = analysis_data.get('topics', []), analysis_data.get('topic_summaries', {})
-                if not topics: f.write("No topics were identified.\n\n")
+                f.write(f"## 2. Topics Discussed\n\n")
+                
+                original_topics = analysis_data.get('original_topics', [])
+                merged_topics_mapping = analysis_data.get('merged_topics', {})
+                final_topics = analysis_data.get('topics', [])
+
+                if original_topics:
+                    f.write(f"### Original Identified Topics\n\n")
+                    for topic in original_topics:
+                        f.write(f"- {topic}\n")
+                    f.write("\n")
+
+                if merged_topics_mapping and config.merge_topics:
+                    f.write(f"### Merged Topics\n\n")
+                    for merged, original in merged_topics_mapping.items():
+                        f.write(f"- **{merged}** (from: {', '.join(original)})\n")
+                    f.write("\n")
+
+                f.write(f"### Topic Summaries\n\n")
+                topic_summaries = analysis_data.get('topic_summaries', {})
+                if not final_topics:
+                    f.write("No topics were identified.\n\n")
                 else:
-                    for topic in topics:
-                        f.write(f"### Topic: {topic}\n\n**Expert's Opinion on this Topic:**\n{topic_summaries.get(topic, 'No summary generated.')}\n\n")
+                    for topic in final_topics:
+                        f.write(f"<details>\n<summary><h4>{topic}</h4></summary>\n\n{topic_summaries.get(topic, 'No summary generated.')}\n\n</details>\n\n")
                 key_insights = analysis_data.get('key_insights', [])
                 f.write(f"## 3. Overall Key Insights from the Expert\n\n")
                 if key_insights:
@@ -598,6 +743,19 @@ def save_results(state: TranscriptState) -> None:
                 if state.get('errors'):
                     f.write(f"\n## Errors\n\n")
                     for error in state['errors']: f.write(f"- {error}\n")
+
+                if state.get('warnings'):
+                    f.write(f"\n## Warnings\n\n")
+                    for warning in state['warnings']: f.write(f"- {warning}\n")
+
+                if state.get('processing_time'):
+                    f.write(f"\n## Performance Metrics\n\n")
+                    total_time = sum(state['processing_time'].values())
+                    f.write(f"- **Total processing time:** {total_time:.2f} seconds\n")
+                    f.write(f"- **Token count:** {state.get('token_count', 'N/A')}\n")
+                    f.write("\n### Step-by-step processing time:\n\n")
+                    for step, time_taken in state['processing_time'].items():
+                        f.write(f"- **{step}:** {time_taken:.2f}s\n")
         logger.info(f"Results saved to {output_path}")
     except Exception as e:
         logger.error(f"Failed to save results: {e}")
@@ -608,11 +766,30 @@ def print_results(state: TranscriptState) -> None:
     print("\n" + "="*80 + "\nMEETING TRANSCRIPT ANALYSIS RESULTS\n" + "="*80)
     print(f"Analyzed transcript: {state['transcript_path']} ({state.get('token_count', 'N/A')} tokens)")
     if 'executive_overview' in analysis: print(f"\n## 1. Executive Overview\n\n{analysis['executive_overview']}")
-    print("\n## 2. Topics Discussed and Expert's Opinions\n")
-    topics, topic_summaries = analysis.get('topics', []), analysis.get('topic_summaries', {})
-    if not topics: print("No topics were identified.")
+    
+    print("\n## 2. Topics Discussed\n")
+    original_topics = analysis.get('original_topics', [])
+    merged_topics_mapping = analysis.get('merged_topics', {})
+    final_topics = analysis.get('topics', [])
+    config = state['config']
+
+    if original_topics:
+        print("\n### Original Identified Topics\n")
+        for topic in original_topics:
+            print(f"- {topic}")
+
+    if merged_topics_mapping and config.merge_topics:
+        print("\n### Merged Topics\n")
+        for merged, original in merged_topics_mapping.items():
+            print(f"- {merged} (from: {', '.join(original)})")
+
+    print("\n### Topic Summaries\n")
+    topic_summaries = analysis.get('topic_summaries', {})
+    if not final_topics:
+        print("No topics were identified.")
     else:
-        for topic in topics: print(f"\n### Topic: {topic}\n\n**Expert's Opinion on this Topic:**\n{topic_summaries.get(topic, 'No summary generated.')}")
+        for topic in final_topics:
+            print(f"\n#### {topic}\n\n{topic_summaries.get(topic, 'No summary generated.')}")
     print("\n\n## 3. Overall Key Insights from the Expert\n")
     key_insights = analysis.get('key_insights', [])
     if key_insights:
@@ -637,24 +814,42 @@ def print_results(state: TranscriptState) -> None:
     print("\n" + "="*80)
 
 
-def build_analyzer_graph():
+def build_analyzer_graph(config: Config):
     """Build the LangGraph workflow for transcript analysis."""
     workflow = StateGraph(TranscriptState)
     workflow.add_node("load_and_split", load_and_split_transcript)
     workflow.add_node("identify_topics", identify_topics)
-    workflow.add_node("merge_overlapping_topics", merge_overlapping_topics) # New node
+    workflow.add_node("merge_overlapping_topics", merge_overlapping_topics)
+    workflow.add_node("extract_topic_texts", extract_topic_texts)
     workflow.add_node("summarize_topics", summarize_topics)
     workflow.add_node("extract_key_insights", extract_key_insights)
     workflow.add_node("extract_decisions", extract_decisions)
+    workflow.add_node("extract_action_items", extract_action_items)
     workflow.add_node("generate_executive_summary", generate_executive_summary)
 
     workflow.set_entry_point("load_and_split")
     workflow.add_edge("load_and_split", "identify_topics")
-    workflow.add_edge("identify_topics", "merge_overlapping_topics") # New edge
-    workflow.add_edge("merge_overlapping_topics", "summarize_topics") # New edge
+
+    previous_node = "identify_topics"
+    if config.merge_topics:
+        workflow.add_edge("identify_topics", "merge_overlapping_topics")
+        previous_node = "merge_overlapping_topics"
+
+    if config.separate_topic_summarization:
+        workflow.add_edge(previous_node, "extract_topic_texts")
+        workflow.add_edge("extract_topic_texts", "summarize_topics")
+    else:
+        workflow.add_edge(previous_node, "summarize_topics")
+
     workflow.add_edge("summarize_topics", "extract_key_insights")
     workflow.add_edge("extract_key_insights", "extract_decisions")
-    workflow.add_edge("extract_decisions", "generate_executive_summary")
+    
+    previous_node = "extract_decisions"
+    if config.extract_action_items:
+        workflow.add_edge("extract_decisions", "extract_action_items")
+        previous_node = "extract_action_items"
+
+    workflow.add_edge(previous_node, "generate_executive_summary")
     workflow.add_edge("generate_executive_summary", END)
     
     return workflow.compile()
@@ -662,37 +857,74 @@ def build_analyzer_graph():
 
 def main():
     """Main function with argument parsing and workflow execution."""
+    load_dotenv() # Load environment variables from .env file
     parser = argparse.ArgumentParser(description="Analyze a meeting transcript with LangGraph")
 
     # Input/Output Options
     io_group = parser.add_argument_group("Input/Output Options")
     io_group.add_argument("transcript_path", nargs='?', help="Path to transcript file (.txt)")
     io_group.add_argument("--output", help="Output file path")
-    io_group.add_argument("--format", choices=["console", "json", "markdown"], default="console", help="Output format")
+    io_group.add_argument("--format", choices=["console", "json", "markdown", "yaml", "csv", "tsv"], help="Output format")
 
     # Configuration Options
     config_group = parser.add_argument_group("Configuration Options")
     config_group.add_argument("--config", help="Path to YAML configuration file")
-    config_group.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], help="Set the logging level.")
+    config_group.add_argument("--interview", action="store_true", help="Use interview-focused prompts instead of meeting prompts.")
+    config_group.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], help="Set the logging level.")
 
     # LLM Model Options
     llm_group = parser.add_argument_group("LLM Model Options")
-    llm_group.add_argument("--provider", choices=["ollama", "openai", "google"], help="LLM provider")
-    llm_group.add_argument("--model", help="Model name to use (e.g., llama3, gpt-4o, gemini-1.5-flash)")
+    llm_group.add_argument("--model", help="Model to use, in 'provider/model_name' format (e.g., openai/gpt-4o). Defaults to 'ollama' if no provider is specified.")
     llm_group.add_argument("--ollama-options", type=json.loads, help='JSON string of options for Ollama (e.g., "{\"num_ctx\": 8192}")')
-    config_group.add_argument("--full-transcript", action="store_true", help="Process the full transcript at once, bypassing iterative refinement.")
-    
+    llm_group.add_argument("--openai-api-base-url", help="Alternative base URL for OpenAI API (e.g., for local LLMs)")
+    config_group.add_argument("--iterative-analysis", action="store_true", help="Process the transcript iteratively, instead of all at once.")
+    config_group.add_argument("--merge-topics", action="store_true", help="Enable the topic merging step.")
+    config_group.add_argument("--separate-topic-summarization", action="store_true", help="Summarize topics from extracted relevant text instead of the full transcript.")
+    config_group.add_argument("--extract-action-items", action="store_true", help="Extract action items from the transcript.")
+
     args = parser.parse_args()
-    
+
     try:
-        config = Config.from_yaml(args.config) if args.config else Config()
-        if args.provider: config.model_provider = args.provider
-        if args.model: config.model_name = args.model
+        # --- Configuration Loading Hierarchy ---
+        # 1. Load from YAML file if specified, otherwise use defaults
+        config = Config.from_yaml(args.config) if args.config and Path(args.config).exists() else Config()
+
+        # 2. Override with Environment Variables
+        if os.getenv("MODEL_PROVIDER"): config.model_provider = os.getenv("MODEL_PROVIDER")
+        if os.getenv("MODEL_NAME"): config.model_name = os.getenv("MODEL_NAME")
+        if os.getenv("OPENAI_API_BASE_URL"): config.openai_api_base_url = os.getenv("OPENAI_API_BASE_URL")
+        if os.getenv("OLLAMA_MODEL_OPTIONS"): config.ollama_model_options = json.loads(os.getenv("OLLAMA_MODEL_OPTIONS"))
+        if os.getenv("OUTPUT_FORMAT"): config.output_format = os.getenv("OUTPUT_FORMAT")
+        if os.getenv("OUTPUT_FILE"): config.output_file = os.getenv("OUTPUT_FILE")
+        if os.getenv("LOG_LEVEL"): 
+            global log_level
+            log_level = getattr(logging, os.getenv("LOG_LEVEL").upper(), logging.INFO)
+            logging.basicConfig(level=log_level, format='%(asctime)s - %(levelname)s - %(message)s', force=True)
+
+        # 3. Override with Command-Line Arguments
+        if args.model:
+            if '/' in args.model:
+                provider, model_name = args.model.split('/', 1)
+                config.model_provider = provider
+                config.model_name = model_name
+            else:
+                config.model_name = args.model
+        
         if args.output: config.output_file = args.output
         if args.format: config.output_format = args.format
-        if args.full_transcript: config.process_full_transcript = args.full_transcript
+        if args.interview: config.interview_mode = True
+        if args.merge_topics: config.merge_topics = True
+        if args.iterative_analysis: config.iterative_analysis = True
+        if args.separate_topic_summarization: config.separate_topic_summarization = True
+        if args.extract_action_items: config.extract_action_items = True
+        if args.openai_api_base_url: config.openai_api_base_url = args.openai_api_base_url
+        if args.log_level:
+            log_level = getattr(logging, args.log_level.upper(), logging.INFO)
+            logging.basicConfig(level=log_level, format='%(asctime)s - %(levelname)s - %(message)s', force=True)
 
-        prompts_content = resources.read_text('interview_summarizer', config.prompts_file)
+        prompts_file = "prompts_interview.yaml" if config.interview_mode else "prompts_meeting.yaml"
+        with resources.open_text("meeting_summarizer", prompts_file) as f:
+            prompts_content = f.read()
         prompt_manager = PromptManager(prompts_content)
 
         if not args.transcript_path:
@@ -705,7 +937,7 @@ def main():
         }
         
         logger.info("Starting meeting transcript analysis workflow...")
-        app = build_analyzer_graph()
+        app = build_analyzer_graph(config)
         final_state = app.invoke(initial_state)
         
         print() # New line after progress bar

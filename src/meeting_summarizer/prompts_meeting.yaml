@@ -1,0 +1,169 @@
+
+identify_topics:
+  initial_prompt: |
+    You are an analyst. Read the meeting transcript chunk below and identify the main topics of discussion. The transcript may contain multiple speakers.
+    Return a JSON object with a 'topics' key containing a list of strings.
+
+    TRANSCRIPT CHUNK:
+    ---
+    {text}
+    ---
+
+    {format_instructions}
+  refine_prompt: |
+    You are a topic consolidation agent. Refine an existing list of topics by analyzing a new meeting transcript chunk and merging new information.
+
+    **Instructions:**
+    1.  **Analyze Existing Topics:** Review the `EXISTING TOPICS` provided.
+    2.  **Identify New Topics:** Read the `NEW TRANSCRIPT CHUNK` and identify new topics discussed by the participants.
+    3.  **Consolidate and Merge:** Compare each new topic to the existing list.
+        - If it is semantically identical or a slight variation of an existing topic, **do not add it**.
+        - If it is a sub-topic of an existing topic, **merge them** into a more comprehensive topic.
+        - If it is a completely new and distinct topic, **add it**.
+    4.  **Final Output:** Return a single JSON object with one key, "topics", containing the final, consolidated list of strings.
+
+    **EXISTING TOPICS (JSON string):**
+    {existing_answer}
+
+    **NEW TRANSCRIPT CHUNK:**
+    ---
+    {text}
+    ---
+
+    {format_instructions}
+
+summarize_topics:
+  initial_prompt: |
+    You are a meeting analyst. Your task is to provide a concise summary of the discussion on the topic **'{topic}'** based *only* on the transcript chunk below. Synthesize the points from all relevant participants.
+
+    TRANSCRIPT CHUNK:
+    ---
+    {text}
+    ---
+
+    SUMMARY OF DISCUSSION ON '{topic}':
+  refine_prompt: |
+    You are a meeting analyst. You have an existing summary for the topic **'{topic}'**. Refine this summary with the new context from the transcript chunk below. Focus ONLY on information relevant to '{topic}' and integrate the perspectives of different participants.
+
+    EXISTING SUMMARY FOR '{topic}':
+    {existing_answer}
+
+    NEW TRANSCRIPT CHUNK:
+    ---
+    {text}
+    ---
+
+    REFINED SUMMARY FOR '{topic}':
+
+extract_key_insights:
+  initial_prompt: |
+    You are an analyst. Extract the most important, overarching key insights from the meeting transcript below. Where possible, attribute the insight to the speaker (e.g., "[Speaker Name]: [Insight]").
+    Return a JSON object with an 'insights' key containing a list of strings.
+
+    TRANSCRIPT:
+    ---
+    {text}
+    ---
+
+    {format_instructions}
+  refine_prompt: |
+    You are an analyst. You have an existing list of key insights. Add new, distinct insights from the transcript chunk below, avoiding duplicates. Attribute insights to speakers where possible.
+
+    EXISTING INSIGHTS:
+    {existing_answer}
+
+    NEW TRANSCRIPT CHUNK:
+    ---
+    {text}
+    ---
+
+    {format_instructions}
+
+extract_decisions:
+  initial_prompt: |
+    You are an analyst. Extract explicit decisions or agreements made during the meeting from the text below. Identify what was decided.
+    Return a JSON object with a 'decisions' key containing a list of strings.
+
+    TRANSCRIPT CHUNK:
+    ---
+    {text}
+    ---
+
+    {format_instructions}
+  refine_prompt: |
+    You are an analyst. You have an existing list of decisions. Add new, distinct decisions from the transcript chunk below, avoiding duplicates.
+
+    EXISTING DECISIONS:
+    {existing_answer}
+
+    NEW TRANSCRIPT CHUNK:
+    ---
+    {text}
+    ---
+
+    {format_instructions}
+
+extract_action_items:
+  initial_prompt: |
+    You are an analyst. Extract clear, actionable tasks or action items from the text below. For each action item, identify the task and who is assigned to it, if mentioned.
+    Return a JSON object with an 'action_items' key containing a list of strings (e.g., "[Person Name] to send the report by EOD Friday.").
+
+    TRANSCRIPT CHUNK:
+    ---
+    {text}
+    ---
+
+    {format_instructions}
+  refine_prompt: |
+    You are an analyst. You have an existing list of action items. Add new, distinct action items from the transcript chunk below, avoiding duplicates.
+
+    EXISTING ACTION ITEMS:
+    {existing_answer}
+
+    NEW TRANSCRIPT CHUNK:
+    ---
+    {text}
+    ---
+
+    {format_instructions}
+
+generate_executive_summary:
+  initial_prompt: |
+    You are a professional summarizer. Create a concise executive summary of the following meeting transcript. The meeting involved multiple participants.
+    Focus on the main topics discussed, key outcomes, and any major decisions or action items. The summary should be a brief, digestible paragraph.
+
+    MEETING TRANSCRIPT:
+    ---
+    {text}
+    ---
+
+    EXECUTIVE SUMMARY:
+  refine_prompt: |
+    You are a professional summarizer. Refine the existing executive summary with the new topic summary below, which is from a larger meeting. The final overview must be a single, cohesive paragraph.
+
+    EXISTING EXECUTIVE SUMMARY:
+    {existing_answer}
+
+    NEW TOPIC SUMMARY:
+    ---
+    {text}
+    ---
+
+    REFINED EXECUTIVE SUMMARY:
+
+merge_topics:
+  initial_prompt: |
+    You are a topic consolidation expert. Your task is to merge a list of potentially overlapping topics from a multi-participant meeting into a smaller, more coherent set of unique topics.
+
+    **Instructions:**
+    1.  **Analyze the List:** Review the `TOPIC LIST` provided below.
+    2.  **Identify Overlaps:** Identify topics that are semantically similar, are subsets of each other, or discuss the same core concept from different participant perspectives.
+    3.  **Merge and Rename:** Group the similar topics. For each group, create a new, concise, and representative topic title that captures the essence of the discussion.
+    4.  **Final Output:** Return a single JSON object as described by the format instructions. The keys should be the new merged topic titles, and the values should be the list of original topics that were grouped under that new title.
+
+    **TOPIC LIST:**
+    ---
+    {topics}
+    ---
+
+    {format_instructions}
