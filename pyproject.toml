@@ -7,7 +7,7 @@ name = "interview-summarizer"
 version = "0.1.0"
 description = "A LangChain/LangGraph program designed to analyze meeting transcripts, extract key information, and generate concise summaries."
 authors = [
-  { name="Hugo", email="hugo@example.com" },
+  { name="Hugo Martiniano", email="hugomartiniano@gmail.com" },
 ]
 readme = "README.md"
 requires-python = ">=3.8"
@@ -29,10 +29,16 @@ dependencies = [
 ]
 
 [tool.setuptools]
-include-package-data = true
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"interview_summarizer" = ["*.yaml"]
 
 [project.scripts]
-interview-summarizer = "interview_summarizer:main"
+interview-summarizer = "interview_summarizer.main:main"
 
 [project.urls]
 "Homepage" = "https://github.com/hugo/interview_summarizer"

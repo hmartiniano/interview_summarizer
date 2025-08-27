@@ -26,6 +26,7 @@ import logging
 import yaml
 import json
 from json.decoder import JSONDecodeError
+from importlib import resources
 
 from langchain_core.runnables import Runnable
 from langchain_core.output_parsers import StrOutputParser, JsonOutputParser, BaseOutputParser, PydanticOutputParser
@@ -106,15 +107,14 @@ class Config:
 
 class PromptManager:
     """Manages loading and accessing prompt templates from a YAML file."""
-    def __init__(self, prompts_file: str):
-        self.prompts = self._load_prompts(prompts_file)
+    def __init__(self, prompts_content: str):
+        self.prompts = self._parse_prompts(prompts_content)
 
-    def _load_prompts(self, prompts_file: str) -> Dict[str, Any]:
+    def _parse_prompts(self, prompts_content: str) -> Dict[str, Any]:
         try:
-            with open(prompts_file, 'r') as f:
-                return yaml.safe_load(f)
+            return yaml.safe_load(prompts_content)
         except Exception as e:
-            logger.error(f"Failed to load prompts from {prompts_file}: {e}")
+            logger.error(f"Failed to parse prompts: {e}")
             return {}
 
     def get_prompt(self, task: str, prompt_type: str) -> PromptTemplate:
@@ -692,13 +692,8 @@ def main():
         if args.format: config.output_format = args.format
         if args.full_transcript: config.process_full_transcript = args.full_transcript
 
-        # Try to find prompts.yaml relative to the script, then in the current directory
-        script_dir = Path(__file__).parent
-        prompts_path = script_dir / config.prompts_file
-        if not prompts_path.exists():
-            prompts_path = Path(config.prompts_file) # Fallback to current dir
-
-        prompt_manager = PromptManager(str(prompts_path))
+        prompts_content = resources.read_text('interview_summarizer', config.prompts_file)
+        prompt_manager = PromptManager(prompts_content)
 
         if not args.transcript_path:
             parser.error("Transcript path is required")
