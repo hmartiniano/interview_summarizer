@@ -27,3 +27,8 @@ Thumbs.db
 # Logs and output files
 *.log
 nohup.out
+
+# Ignore document files
+*.txt
+*.docx
+*_summary.md
