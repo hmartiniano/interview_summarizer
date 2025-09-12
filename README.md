@@ -84,7 +84,12 @@ model_provider: openai
 model_name: gpt-4o-mini
 output_format: markdown
 output_file: analysis_results.md
-# ... other settings
+max_retries: 3
+retry_delay: 2.0
+enable_progress_bar: true
+allowed_extensions: ['.txt']
+prompts_file: prompts.yaml
+openai_api_base_url: http://localhost:1234/v1 # Example for local LLM or proxy
 ```
 
 
